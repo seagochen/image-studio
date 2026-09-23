@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src", "../shared", "vite.config.ts"],
+  // Test files are type-checked/compiled by ts-jest (see jest.config.js /
+  // tsconfig.jest.json), not this config — they pull in jest's ambient
+  // types, which this production/build config intentionally excludes.
+  "exclude": ["node_modules", "dist", "**/__tests__/**"]
+}

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "static-webapp",
+  "moduleId": "image-studio",
+  "version": "0.1.0",
+  "suggestedSlug": "image-studio",
+  "containerPort": 8080,
+  "healthPath": "/healthz",
+  "platformApiVersion": "v1",
+  "presentation": {
+    "icon": "image",
+    "titleKey": "platform.imageStudio",
+    "descriptionKey": "portal.imageStudioDesc"
+  },
+  "capabilities": [
+    "platform.auth",
+    "platform.ai-runs",
+    "platform.documents",
+    "platform.objects",
+    "platform.cache"
+  ],
+  "dataPolicy": {
+    "documentProfiles": ["image-studio-project"],
+    "objectContentTypes": ["image/png", "image/jpeg", "image/webp", "application/zip"],
+    "objectMaxBytes": 26214400,
+    "cacheNamespaces": ["drafts", "previews"],
+    "cacheMaxBytes": 65536,
+    "cacheMaxEntries": 200,
+    "cacheMaxTtlSeconds": 86400
+  }
+}
