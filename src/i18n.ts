@@ -5,7 +5,7 @@ export type { Locale } from "../../shared/locale";
 const coreLabelsEn = {
   title: "Image Studio", dashboard: "Dashboard", account: "Account", import: "Open image",
   select: "Select", hand: "Pan", brush: "Brush", eraser: "Eraser", eyedropper: "Eyedropper", undo: "Undo", redo: "Redo",
-  fit: "Fit", reset: "100%", layers: "Layers", propertiesTab: "Properties", inspectorPanels: "Editing panels", layerActions: "Layer actions", newLayer: "New layer", paintLayer: "Paint", maskLayer: "Mask", annotationLayer: "Text & shapes", adjustLayer: "Adjustment layer",
+  fit: "Fit", reset: "100%", layers: "Layers", propertiesTab: "Properties", inspectorPanels: "Editing panels", layerActions: "Layer actions", newLayer: "New layer", newPaintLayer: "New drawing layer", newMaskLayer: "New mask layer", paintLayer: "Paint", maskLayer: "Mask", annotationLayer: "Text & shapes", adjustLayer: "Adjustment layer",
   navigator: "Navigator", navigatorCollapse: "Collapse navigator", navigatorExpand: "Expand navigator",
   duplicate: "Duplicate", remove: "Delete", up: "Up", down: "Down", visible: "Visible", locked: "Locked", showLayer: "Show layer", hideLayer: "Hide layer", lockLayer: "Lock layer", unlockLayer: "Unlock layer",
   opacity: "Opacity", name: "Name", parameters: "Parameters", colorWheel: "Color wheel", pickColor: "Pick color", blendMode: "Blend mode", blendNormal: "Normal", blendMultiply: "Multiply", blendScreen: "Screen", blendOverlay: "Overlay", blendDarken: "Darken", blendLighten: "Lighten",
@@ -30,7 +30,7 @@ export const CORE_LABELS: Record<Locale, CoreLabels> = {
   ja: {
     title: "画像スタジオ", dashboard: "ダッシュボード", account: "アカウント", import: "画像を開く",
     select: "選択", hand: "移動", brush: "ブラシ", eraser: "消しゴム", eyedropper: "スポイト", undo: "元に戻す", redo: "やり直す",
-    fit: "全体表示", reset: "100%", layers: "レイヤー", propertiesTab: "プロパティ", inspectorPanels: "編集パネル", layerActions: "レイヤー操作", newLayer: "新規レイヤー", paintLayer: "ペイント", maskLayer: "マスク", annotationLayer: "文字と図形", adjustLayer: "調整レイヤー",
+    fit: "全体表示", reset: "100%", layers: "レイヤー", propertiesTab: "プロパティ", inspectorPanels: "編集パネル", layerActions: "レイヤー操作", newLayer: "新規レイヤー", newPaintLayer: "描画レイヤーを追加", newMaskLayer: "マスクレイヤーを追加", paintLayer: "ペイント", maskLayer: "マスク", annotationLayer: "文字と図形", adjustLayer: "調整レイヤー",
     navigator: "ナビゲーター", navigatorCollapse: "ナビゲーターを閉じる", navigatorExpand: "ナビゲーターを開く",
     duplicate: "複製", remove: "削除", up: "上へ", down: "下へ", visible: "表示", locked: "ロック", showLayer: "レイヤーを表示", hideLayer: "レイヤーを非表示", lockLayer: "レイヤーをロック", unlockLayer: "レイヤーのロックを解除",
     opacity: "不透明度", name: "名前", parameters: "パラメーター", colorWheel: "カラーホイール", pickColor: "色を取得", blendMode: "描画モード", blendNormal: "通常", blendMultiply: "乗算", blendScreen: "スクリーン", blendOverlay: "オーバーレイ", blendDarken: "比較（暗）", blendLighten: "比較（明）",
@@ -51,7 +51,7 @@ export const CORE_LABELS: Record<Locale, CoreLabels> = {
   "zh-CN": {
     title: "图片工作室", dashboard: "控制台", account: "账户", import: "打开图片",
     select: "选择", hand: "平移", brush: "画笔", eraser: "橡皮擦", eyedropper: "取色器", undo: "撤销", redo: "重做",
-    fit: "适合画布", reset: "100%", layers: "图层", propertiesTab: "属性", inspectorPanels: "编辑面板", layerActions: "图层操作", newLayer: "新建图层", paintLayer: "绘画图层", maskLayer: "蒙版图层", annotationLayer: "文字与图形图层", adjustLayer: "调整图层",
+    fit: "适合画布", reset: "100%", layers: "图层", propertiesTab: "属性", inspectorPanels: "编辑面板", layerActions: "图层操作", newLayer: "新建图层", newPaintLayer: "新建绘图图层", newMaskLayer: "新建蒙版图层", paintLayer: "绘画图层", maskLayer: "蒙版图层", annotationLayer: "文字与图形图层", adjustLayer: "调整图层",
     navigator: "导航器", navigatorCollapse: "收起导航器", navigatorExpand: "展开导航器",
     duplicate: "复制", remove: "删除", up: "上移", down: "下移", visible: "显示", locked: "锁定", showLayer: "显示图层", hideLayer: "隐藏图层", lockLayer: "锁定图层", unlockLayer: "解锁图层",
     opacity: "不透明度", name: "名称", parameters: "参数", colorWheel: "颜色轮盘", pickColor: "吸取颜色", blendMode: "混合模式", blendNormal: "正常", blendMultiply: "正片叠底", blendScreen: "滤色", blendOverlay: "叠加", blendDarken: "变暗", blendLighten: "变亮",
@@ -71,7 +71,7 @@ export const CORE_LABELS: Record<Locale, CoreLabels> = {
   "zh-TW": {
     title: "圖片工作室", dashboard: "控制台", account: "帳戶", import: "開啟圖片",
     select: "選取", hand: "平移", brush: "畫筆", eraser: "橡皮擦", eyedropper: "取色器", undo: "復原", redo: "重做",
-    fit: "適合畫布", reset: "100%", layers: "圖層", propertiesTab: "屬性", inspectorPanels: "編輯面板", layerActions: "圖層操作", newLayer: "新建圖層", paintLayer: "繪畫圖層", maskLayer: "遮罩圖層", annotationLayer: "文字與圖形圖層", adjustLayer: "調整圖層",
+    fit: "適合畫布", reset: "100%", layers: "圖層", propertiesTab: "屬性", inspectorPanels: "編輯面板", layerActions: "圖層操作", newLayer: "新建圖層", newPaintLayer: "新增繪圖圖層", newMaskLayer: "新增遮罩圖層", paintLayer: "繪畫圖層", maskLayer: "遮罩圖層", annotationLayer: "文字與圖形圖層", adjustLayer: "調整圖層",
     navigator: "導覽器", navigatorCollapse: "收合導覽器", navigatorExpand: "展開導覽器",
     duplicate: "複製", remove: "刪除", up: "上移", down: "下移", visible: "顯示", locked: "鎖定", showLayer: "顯示圖層", hideLayer: "隱藏圖層", lockLayer: "鎖定圖層", unlockLayer: "解鎖圖層",
     opacity: "不透明度", name: "名稱", parameters: "參數", colorWheel: "顏色輪盤", pickColor: "吸取顏色", blendMode: "混合模式", blendNormal: "正常", blendMultiply: "色彩增值", blendScreen: "濾色", blendOverlay: "覆蓋", blendDarken: "變暗", blendLighten: "變亮",

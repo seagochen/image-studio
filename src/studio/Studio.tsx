@@ -596,6 +596,7 @@ export function Studio(): JSX.Element {
             onSelectLayer={(layerId) => setDocument((current) => selectLayer(current, layerId))}
             onMergeLayer={(layerId, direction) => void mergeLayer(layerId, direction)}
             onAddPaint={() => commit((current) => addLayer(current, createDrawingLayer(current, "paint", t("newLayer"))), "Add layer")}
+            onAddMask={() => commit((current) => addLayer(current, createDrawingLayer(current, "mask", t("newMaskLayer"))), "Add mask layer")}
             onCreateAdjustment={createAdjustmentForSelection}
             onDuplicate={duplicateSelectedLayer} onMove={(direction) => selected && commit((current) => moveLayer(current, selected.id, direction), direction > 0 ? "Raise layer" : "Lower layer")}
             onRemove={removeSelectedLayer} />} footer={<>{t("history")}: {history.entries}/50 · {Math.round(history.bytes / 1024 / 1024)} MiB</>} />

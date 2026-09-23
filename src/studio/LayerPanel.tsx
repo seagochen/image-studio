@@ -10,6 +10,7 @@ import { ProductIcon } from "./ProductIcon";
 import { LayerStateToggles } from "./LayerStateToggles";
 import { AdjustmentMenu } from "./AdjustmentMenu";
 import { ADJUSTMENT_KIND_LABELS } from "./AdjustmentPanel";
+import { NewLayerMenu } from "./NewLayerMenu";
 
 type Commit = (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, mergeKey?: string) => void;
 
@@ -22,6 +23,7 @@ interface Props {
   onSelectLayer: (layerId: string) => void;
   onMergeLayer: (layerId: string, direction: -1 | 1) => void;
   onAddPaint: () => void;
+  onAddMask: () => void;
   onCreateAdjustment: (kind: AdjustmentKind) => void;
   onDuplicate: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -83,7 +85,8 @@ export function LayerPanel(props: Props): JSX.Element {
       </div>;
     })}</div>
     <div className="layer-actions" role="toolbar" aria-label={t("layerActions")}>
-      <button disabled={!document.layers.length} title={t("newLayer")} aria-label={t("newLayer")} onClick={props.onAddPaint}><ProductIcon name="plus" /></button>
+      <NewLayerMenu disabled={!document.layers.length} label={t("newLayer")} paintLabel={t("newPaintLayer")} maskLabel={t("newMaskLayer")}
+        onCreatePaint={props.onAddPaint} onCreateMask={props.onAddMask} />
       <AdjustmentMenu disabled={!document.layers.length} label={t("adjustLayer")} labels={ADJUSTMENT_KIND_LABELS[locale]} onSelect={props.onCreateAdjustment} />
       <button disabled={!selected} title={t("duplicate")} aria-label={t("duplicate")} onClick={props.onDuplicate}><ProductIcon name="duplicate" /></button>
       <button disabled={!selected} title={t("up")} aria-label={t("up")} onClick={() => props.onMove(1)}><ProductIcon name="layer-up" /></button>

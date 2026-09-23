@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 describe("Image Studio adjustment layer entry", () => {
   const studio = readFileSync(resolve(__dirname, "../studio/Studio.tsx"), "utf8");
   const layerPanel = readFileSync(resolve(__dirname, "../studio/LayerPanel.tsx"), "utf8");
+  const newLayerMenu = readFileSync(resolve(__dirname, "../studio/NewLayerMenu.tsx"), "utf8");
   const toolRail = readFileSync(resolve(__dirname, "../studio/ToolRail.tsx"), "utf8");
   const menu = readFileSync(resolve(__dirname, "../studio/AdjustmentMenu.tsx"), "utf8");
   const dialog = readFileSync(resolve(__dirname, "../studio/AdjustmentEditorDialog.tsx"), "utf8");
@@ -45,11 +46,14 @@ describe("Image Studio adjustment layer entry", () => {
     expect(studio).toContain('selected?.rasterMaskId');
   });
 
-  it("uses one plus action to create a new drawing layer, rather than a standalone mask action", () => {
-    expect(layerPanel.match(/<ProductIcon name="plus" \/>/g)).toHaveLength(1);
-    expect(layerPanel).toContain('title={t("newLayer")}');
-    expect(layerPanel).not.toContain('name="mask"');
+  it("uses one plus action to offer drawing and mask layer creation", () => {
+    expect(layerPanel).toContain("<NewLayerMenu");
+    expect(layerPanel).toContain('paintLabel={t("newPaintLayer")}');
+    expect(layerPanel).toContain('maskLabel={t("newMaskLayer")}');
+    expect(newLayerMenu.match(/<ProductIcon name="plus" \/>/g)).toHaveLength(1);
+    expect(newLayerMenu).toContain("createPortal(");
     expect(studio).toContain('createDrawingLayer(current, "paint", t("newLayer"))');
+    expect(studio).toContain('createDrawingLayer(current, "mask", t("newMaskLayer"))');
   });
 
   it("applies conventional and perspective results to the selected raster", () => {
