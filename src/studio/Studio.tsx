@@ -11,7 +11,7 @@ import {
 import { LayerInteractions } from "./LayerInteractions";
 import { layerAncestors, layerIsEditable } from "../domain/layerHierarchy";
 import { planLayerMerge } from "../domain/layerMerge";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Circle, Ellipse, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Transformer } from "react-konva";
 import type Konva from "konva";
 import { useI18n, type Locale, type MessageKey } from "../i18n";
@@ -26,7 +26,7 @@ import { clampPoint, screenToStage, stageToImage } from "../../../shared/canvas"
 import { colorSchemeSwatches, hexToHsv, hsvToHex, COLOR_SCHEME_KINDS, type ColorSchemeKind } from "../domain/color";
 import {
   canvasBlendMode, createEmptyDocument, createId, LAYER_BLEND_MODES, rasterSourceUrl,
-  touchDocument, type AdjustmentKind, type AdjustmentLayer, type AnnotationElement, type AnnotationTextElement, type AnnotationRectElement, type AnnotationLayer, type ImageStudioDocument, type Stroke,
+  touchDocument, type AdjustmentKind, type AdjustmentLayer, type AnnotationElement, type AnnotationTextElement, type AnnotationRectElement, type AnnotationLayer, type ImageStudioDocument, type ImageStudioLayer, type Stroke,
 } from "../domain/document";
 import {
   BRUSH_PRESET_IDS, BrushStrokeSession, MAX_STROKE_SAMPLES, fallbackSample, pointerSamples, renderBrushDabs, settingsForPreset,
@@ -490,13 +490,15 @@ export function Studio(): JSX.Element {
               </Group>}
               {draftAnnotation && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
-                <AnnotationNode layer={draftLayer(document, draftAnnotation)} selectable={false} onSelect={() => undefined} onTransform={() => undefined} />
+                {wrapLayerAncestors(document.layers, pixelSelection?.layerId === selected?.id ? selected?.id : null,
+                  <AnnotationNode layer={draftLayer(document, draftAnnotation, pixelSelection?.layerId === selected?.id ? selected : null)}
+                    selectable={false} onSelect={() => undefined} onTransform={() => undefined} />)}
               </Group>}
             </Layer>
             <Layer listening={false}>
               <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
-                {selected && (selected.type === "raster" || selected.type === "paint" || selected.type === "annotation") && <Group x={selected.transform.x} y={selected.transform.y}
+                {selected && (selected.type === "raster" || selected.type === "paint" || selected.type === "annotation") && wrapLayerAncestors(document.layers, selected.id, <Group x={selected.transform.x} y={selected.transform.y}
                   scaleX={selected.transform.scaleX} scaleY={selected.transform.scaleY} rotation={selected.transform.rotation}>
                   {selectionPreview && pixelSelection?.layerId === selected.id && <KonvaImage image={selectionPreview} width={selected.width} height={selected.height} opacity={0.72} />}
                   {marqueeDraft && tool === "marquee" && <Rect x={Math.min(marqueeDraft.start.x, marqueeDraft.end.x)} y={Math.min(marqueeDraft.start.y, marqueeDraft.end.y)}
@@ -507,7 +509,7 @@ export function Studio(): JSX.Element {
                     fill="rgba(95,111,237,.12)" stroke="#1f2937" strokeWidth={1} dash={[5, 4]} strokeScaleEnabled={false} />}
                   {lassoDraft && (tool === "lasso" || tool === "polygonLasso") && <Line points={lassoDraft.flatMap((point) => [point.x, point.y])}
                     closed={tool === "lasso"} stroke="#1f2937" strokeWidth={1} dash={[5, 4]} listening={false} />}
-                </Group>}
+                </Group>)}
               </Group>
               {cursorPreview && <Circle name="current-color-preview" x={cursorPreview.x} y={cursorPreview.y}
                 radius={SIZED_CURSOR_TOOLS.includes(tool) ? Math.max(2, cursorRadius) : 7}
@@ -705,8 +707,17 @@ function createSelectionPreview(selection: PixelSelectionMask): HTMLCanvasElemen
   return canvas;
 }
 
-function draftLayer(document: ImageStudioDocument, element: AnnotationElement): AnnotationLayer {
+function draftLayer(document: ImageStudioDocument, element: AnnotationElement, source: ImageStudioLayer | null = null): AnnotationLayer {
+  const base = createAnnotationLayer(document, "draft");
   return {
-    ...createAnnotationLayer(document, "draft"), id: "annotation-draft", elements: [element], locked: true,
+    ...base, id: "annotation-draft", elements: [element], locked: true,
+    transform: source?.transform ?? base.transform,
   };
+}
+
+function wrapLayerAncestors(layers: ImageStudioLayer[], layerId: string | null | undefined, content: ReactNode): ReactNode {
+  if (!layerId) return content;
+  return layerAncestors(layers, layerId).reduce<ReactNode>((child, ancestor) =>
+    <Group key={ancestor.id} x={ancestor.transform.x} y={ancestor.transform.y}
+      scaleX={ancestor.transform.scaleX} scaleY={ancestor.transform.scaleY} rotation={ancestor.transform.rotation}>{child}</Group>, content);
 }

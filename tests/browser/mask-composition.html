@@ -88,7 +88,23 @@
     }
     localCanvas.width = 1;
     localCanvas.height = 1;
-    result.textContent = JSON.stringify({ status: "passed", samples, inverted: { hiddenCenter, visibleOutside }, feathered: { edgeAlpha, farAlpha }, local: { center: localCenter, outside: localOutside } });
+    const translatedGroup = { ...createGroupLayer(empty, "translated group"), transform: { x: 8, y: 0, scaleX: 1, scaleY: 1, rotation: 0 } };
+    const groupedSource = { ...createDrawingLayer(empty, "paint", "editable grouped source"), parentId: translatedGroup.id };
+    const grouped = addSelectionMaskedLocalLayer({ ...empty, layers: [translatedGroup, groupedSource] }, groupedSource.id, {
+      width: 64, height: 64,
+      pixels: Uint8Array.from({ length: 64 * 64 }, (_, index) => index % 64 >= 16 && index % 64 < 48 && Math.floor(index / 64) >= 16 && Math.floor(index / 64) < 48 ? 1 : 0),
+    }, { type: "annotation", name: "selected grouped rectangle", element: {
+      id: "grouped-selected-rect", kind: "rect", x: 0, y: 0, width: 64, height: 64,
+      rotation: 0, fill: "#ff0000", stroke: "#ff0000", strokeWidth: 0, cornerRadius: 0,
+    } });
+    const groupedCanvas = await renderImageStudioDocument(parseDocument(serializeDocument(grouped)));
+    const groupedContext = groupedCanvas.getContext("2d");
+    const groupedInside = [...groupedContext.getImageData(32, 32, 1, 1).data];
+    const groupedOutside = [...groupedContext.getImageData(20, 32, 1, 1).data];
+    if (groupedInside[3] !== 255 || groupedOutside[3] !== 0) throw new Error("Grouped local mask transform mismatch");
+    groupedCanvas.width = 1;
+    groupedCanvas.height = 1;
+    result.textContent = JSON.stringify({ status: "passed", samples, inverted: { hiddenCenter, visibleOutside }, feathered: { edgeAlpha, farAlpha }, local: { center: localCenter, outside: localOutside }, grouped: { inside: groupedInside, outside: groupedOutside } });
     document.documentElement.dataset.result = "passed";
   } catch (error) {
     result.textContent = JSON.stringify({ status: "failed", message: String(error) });

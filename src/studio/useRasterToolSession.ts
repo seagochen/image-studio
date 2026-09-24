@@ -298,7 +298,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     if (tool === "marquee" || tool === "ellipseMarquee" || tool === "lasso" || tool === "polygonLasso" || tool === "magicWand") {
       const canvas = directPixelCanvasRef.current;
       const point = pointerInSelectedLayer();
-      if (!point || !selected || !["raster", "paint", "annotation"].includes(selected.type) || selected.locked
+      if (!point || !selected || !["raster", "paint", "annotation"].includes(selected.type) || !selectedEditable
         || (tool === "magicWand" && (selected.type !== "raster" || !canvas || directPixelLayerIdRef.current !== selected.id))) return;
       if (tool === "marquee" || tool === "ellipseMarquee") {
         marqueeStartRef.current = point;

@@ -8,6 +8,7 @@
   import { createEmptyDocument } from "../../src/domain/document.ts";
   import { coverageFromDrawingMask } from "../../src/domain/editCoverage.ts";
   import { clearSelectedTile, rectangularSelectionMask, selectedTileRects } from "../../src/domain/pixelTools.ts";
+  import { encodeSelectionRuns, paintSelectionRuns } from "../../src/domain/selectionMaskRuns.ts";
 
   const result = document.getElementById("result");
   const size = 4096;
@@ -34,8 +35,22 @@
         throw new Error("Unexpected selected tile deletion");
       }
     }
+    const broadSelection = rectangularSelectionMask(size, size, { x: 1024, y: 1024 }, { x: 3071, y: 3071 });
+    const localStart = performance.now();
+    const runs = encodeSelectionRuns(broadSelection);
+    const localCanvas = Object.assign(document.createElement("canvas"), { width: size, height: size });
+    const localContext = localCanvas.getContext("2d");
+    if (!localContext) throw new Error("4K local mask canvas is unavailable");
+    paintSelectionRuns(localContext, runs, size, size);
+    const localElapsedMs = Math.round(performance.now() - localStart);
+    const localInside = localContext.getImageData(2048, 2048, 1, 1).data[3];
+    const localOutside = localContext.getImageData(512, 512, 1, 1).data[3];
+    if (localInside !== 255 || localOutside !== 0 || runs.length > 100_000) throw new Error("Unexpected 4K local mask coverage");
+    localCanvas.width = 1;
+    localCanvas.height = 1;
     result.textContent = JSON.stringify({ status: "passed", size, featherPx: 8, elapsedMs,
-      coverageBytes: coverage.byteLength, selectionBytes: selection.pixels.byteLength, touchedTiles: tiles.length, sample });
+      coverageBytes: coverage.byteLength, selectionBytes: selection.pixels.byteLength, touchedTiles: tiles.length, sample,
+      localElapsedMs, localRuns: runs.length, localInside, localOutside });
     document.documentElement.dataset.result = "passed";
   } catch (error) {
     result.textContent = JSON.stringify({ status: "failed", message: String(error) });
