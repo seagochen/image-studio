@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio owned-mask composition smoke test</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { addLayer, addSelectionMaskedLocalLayer, createAnnotationLayer, createDrawingLayer, createGroupLayer } from "../../src/domain/commands.ts";
+  import { createEmptyDocument, parseDocument, serializeDocument } from "../../src/domain/document.ts";
+  import { renderImageStudioDocument } from "../../src/domain/exportImage.ts";
+
+  const result = document.getElementById("result");
+  const empty = { ...createEmptyDocument(), canvas: { width: 64, height: 64 } };
+  const fullPaint = (parentId = null) => ({
+    ...createDrawingLayer(empty, "paint", "red paint"), parentId,
+    strokes: [{ id: "paint", points: [{ x: 0, y: 32 }, { x: 64, y: 32 }], size: 64, mode: "paint", value: 255, color: "#ff0000" }],
+  });
+  const smallMask = () => ({
+    ...createDrawingLayer(empty, "mask", "owned mask"),
+    strokes: [{ id: "reveal", points: [{ x: 32, y: 32 }], size: 16, mode: "paint", value: 255 }],
+  });
+  const paint = fullPaint();
+  const annotation = {
+    ...createAnnotationLayer(empty, "red rectangle"),
+    elements: [{ id: "rect", kind: "rect", x: 0, y: 0, width: 64, height: 64,
+      rotation: 0, fill: "#ff0000", stroke: "#ff0000", strokeWidth: 0, cornerRadius: 0 }],
+  };
+  const group = createGroupLayer(empty, "red group");
+  const cases = [
+    ["Paint", paint, []],
+    ["Annotation", annotation, []],
+    ["Group", group, [fullPaint(group.id)]],
+  ];
+  try {
+    const samples = [];
+    for (const [type, owner, children] of cases) {
+      const mask = smallMask();
+      const source = { ...empty, layers: [{ ...owner, rasterMaskId: mask.id }, ...children, mask], selection: { layerId: owner.id } };
+      const reopened = parseDocument(serializeDocument(source));
+      const canvas = await renderImageStudioDocument(reopened);
+      const context = canvas.getContext("2d");
+      const center = [...context.getImageData(32, 32, 1, 1).data];
+      const outside = [...context.getImageData(4, 4, 1, 1).data];
+      if (center[0] < 200 || center[3] < 200 || outside[3] !== 0) {
+        throw new Error(`${type} mask mismatch: ${JSON.stringify({ center, outside })}`);
+      }
+      samples.push({ type, center, outside });
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+    const mask = smallMask();
+    const inverted = parseDocument(serializeDocument({ ...empty,
+      layers: [{ ...fullPaint(), rasterMaskId: mask.id, rasterMaskInverted: true }, mask],
+    }));
+    const invertedCanvas = await renderImageStudioDocument(inverted);
+    const invertedContext = invertedCanvas.getContext("2d");
+    const hiddenCenter = invertedContext.getImageData(32, 32, 1, 1).data[3];
+    const visibleOutside = invertedContext.getImageData(4, 4, 1, 1).data[3];
+    if (hiddenCenter !== 0 || visibleOutside !== 255) throw new Error("Inverted mask mismatch");
+    invertedCanvas.width = 1;
+    invertedCanvas.height = 1;
+
+    const feathered = parseDocument(serializeDocument({ ...empty,
+      layers: [{ ...fullPaint(), rasterMaskId: mask.id, rasterMaskFeatherPx: 4 }, mask],
+    }));
+    const featheredCanvas = await renderImageStudioDocument(feathered);
+    const featheredContext = featheredCanvas.getContext("2d");
+    const edgeAlpha = featheredContext.getImageData(40, 32, 1, 1).data[3];
+    const farAlpha = featheredContext.getImageData(4, 4, 1, 1).data[3];
+    if (edgeAlpha <= 0 || edgeAlpha >= 255 || farAlpha !== 0) throw new Error(`Feathered mask mismatch: ${edgeAlpha}/${farAlpha}`);
+    featheredCanvas.width = 1;
+    featheredCanvas.height = 1;
+
+    const source = createDrawingLayer(empty, "paint", "editable original");
+    const local = addSelectionMaskedLocalLayer(addLayer(empty, source), source.id, {
+      width: 64, height: 64,
+      pixels: Uint8Array.from({ length: 64 * 64 }, (_, index) => index % 64 >= 16 && index % 64 < 48 && Math.floor(index / 64) >= 16 && Math.floor(index / 64) < 48 ? 1 : 0),
+    }, { type: "annotation", name: "selected rectangle", element: {
+      id: "selected-rect", kind: "rect", x: 0, y: 0, width: 64, height: 64,
+      rotation: 0, fill: "#ff0000", stroke: "#ff0000", strokeWidth: 0, cornerRadius: 0,
+    } });
+    const localReopened = parseDocument(serializeDocument(local));
+    const localCanvas = await renderImageStudioDocument(localReopened);
+    const localContext = localCanvas.getContext("2d");
+    const localCenter = [...localContext.getImageData(32, 32, 1, 1).data];
+    const localOutside = [...localContext.getImageData(4, 4, 1, 1).data];
+    if (localReopened.version !== 10 || localReopened.layers.length !== 3 || localCenter[0] !== 255 || localCenter[3] !== 255 || localOutside[3] !== 0) {
+      throw new Error(`Local selection mask mismatch: ${JSON.stringify({ localCenter, localOutside })}`);
+    }
+    localCanvas.width = 1;
+    localCanvas.height = 1;
+    result.textContent = JSON.stringify({ status: "passed", samples, inverted: { hiddenCenter, visibleOutside }, feathered: { edgeAlpha, farAlpha }, local: { center: localCenter, outside: localOutside } });
+    document.documentElement.dataset.result = "passed";
+  } catch (error) {
+    result.textContent = JSON.stringify({ status: "failed", message: String(error) });
+    document.documentElement.dataset.result = "failed";
+  }
+</script>
+</html>

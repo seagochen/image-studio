@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio 4K mask smoke test</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { createDrawingLayer } from "../../src/domain/commands.ts";
+  import { createEmptyDocument } from "../../src/domain/document.ts";
+  import { coverageFromDrawingMask } from "../../src/domain/editCoverage.ts";
+  import { clearSelectedTile, rectangularSelectionMask, selectedTileRects } from "../../src/domain/pixelTools.ts";
+
+  const result = document.getElementById("result");
+  const size = 4096;
+  const empty = { ...createEmptyDocument(), canvas: { width: size, height: size } };
+  const mask = createDrawingLayer(empty, "mask", "4K smoke mask");
+  mask.strokes.push({
+    id: "diagonal", points: [{ x: 0, y: 0 }, { x: size, y: size }],
+    size: 64, mode: "paint", value: 255,
+  });
+  try {
+    const start = performance.now();
+    const coverage = coverageFromDrawingMask(mask, false, 8,
+      (width, height) => Object.assign(document.createElement("canvas"), { width, height }));
+    const elapsedMs = Math.round(performance.now() - start);
+    const sample = [coverage[0], coverage[(size / 2) * size + size / 2], coverage[size - 1]];
+    if (coverage.length !== size * size || sample[1] === 0 || sample[2] !== 0) throw new Error("Unexpected 4K coverage");
+    const selection = rectangularSelectionMask(size, size, { x: 255, y: 300 }, { x: 256, y: 300 });
+    const tiles = selectedTileRects(selection, 256);
+    if (tiles.length !== 2) throw new Error("Unexpected 4K selection tile count");
+    for (const tile of tiles) {
+      const before = new Uint8ClampedArray(tile.width * tile.height * 4).fill(255);
+      const after = clearSelectedTile(before, selection, tile.x, tile.y, tile.width, tile.height);
+      if (after.filter((value, index) => index % 4 === 3 && value === 0).length !== 1) {
+        throw new Error("Unexpected selected tile deletion");
+      }
+    }
+    result.textContent = JSON.stringify({ status: "passed", size, featherPx: 8, elapsedMs,
+      coverageBytes: coverage.byteLength, selectionBytes: selection.pixels.byteLength, touchedTiles: tiles.length, sample });
+    document.documentElement.dataset.result = "passed";
+  } catch (error) {
+    result.textContent = JSON.stringify({ status: "failed", message: String(error) });
+    document.documentElement.dataset.result = "failed";
+  }
+</script>
+</html>

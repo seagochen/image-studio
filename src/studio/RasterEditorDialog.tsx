@@ -5,6 +5,7 @@ import {
   type CropRect, type QuarterTurn, type RasterAdjustments, type RasterFilterPreset,
 } from "../domain/rasterAdjustments";
 import { mixChannelRange } from "../domain/pixelTools";
+import { constrainRgbaToCoverage, editedRasterMimeType } from "../domain/editCoverage";
 import { ProductIcon, type ProductIconName } from "./ProductIcon";
 import { MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS } from "../../../../frontend/src/shared/imageStudioDomain";
 import type { Locale } from "../i18n";
@@ -31,6 +32,13 @@ export const RASTER_EDITOR_COPY: Record<Locale, EditorCopy> = {
   ja: { adjust: "基本調整", filters: "フィルター", finetune: "色調補正", crop: "切り抜き", rotate: "回転", flip: "反転", resize: "サイズ変更", undo: "元に戻す", reset: "リセット", cancel: "キャンセル", apply: "適用", loading: "画像を読み込み中…", failed: "画像を読み込めませんでした。", brightness: "明るさ", contrast: "コントラスト", saturation: "彩度", hue: "色相", temperature: "色温度", red: "赤チャンネル", green: "緑チャンネル", blue: "青チャンネル", grayscale: "グレースケール", sepiaAmount: "セピア", x: "X", y: "Y", width: "幅", height: "高さ", aspect: "縦横比", free: "自由", originalRatio: "元画像", square: "正方形", rotateLeft: "左へ90°", rotateRight: "右へ90°", flipHorizontal: "左右反転", flipVertical: "上下反転", lockRatio: "縦横比を固定", outputSize: "出力サイズ", original: "オリジナル", vivid: "鮮やか", mono: "モノクロ", sepia: "セピア", warm: "暖色", cool: "寒色", vintage: "ヴィンテージ", dramatic: "ドラマチック", fade: "フェード" },
   "zh-CN": { adjust: "常规调整", filters: "滤镜", finetune: "色调调整", crop: "裁剪", rotate: "旋转", flip: "翻转", resize: "调整尺寸", undo: "撤销", reset: "重置", cancel: "取消", apply: "应用", loading: "正在加载图片…", failed: "无法加载图片。", brightness: "亮度", contrast: "对比度", saturation: "饱和度", hue: "色相", temperature: "色温", red: "红色通道", green: "绿色通道", blue: "蓝色通道", grayscale: "黑白", sepiaAmount: "棕褐色", x: "横向位置", y: "纵向位置", width: "宽度", height: "高度", aspect: "裁剪比例", free: "自由", originalRatio: "原图", square: "正方形", rotateLeft: "向左旋转 90°", rotateRight: "向右旋转 90°", flipHorizontal: "水平翻转", flipVertical: "垂直翻转", lockRatio: "锁定宽高比", outputSize: "输出尺寸", original: "原图", vivid: "鲜艳", mono: "黑白", sepia: "棕褐", warm: "暖色", cool: "冷色", vintage: "复古", dramatic: "高反差", fade: "褪色" },
   "zh-TW": { adjust: "常規調整", filters: "濾鏡", finetune: "色調調整", crop: "裁剪", rotate: "旋轉", flip: "翻轉", resize: "調整尺寸", undo: "復原", reset: "重設", cancel: "取消", apply: "套用", loading: "正在載入圖片…", failed: "無法載入圖片。", brightness: "亮度", contrast: "對比度", saturation: "飽和度", hue: "色相", temperature: "色溫", red: "紅色通道", green: "綠色通道", blue: "藍色通道", grayscale: "黑白", sepiaAmount: "棕褐色", x: "橫向位置", y: "縱向位置", width: "寬度", height: "高度", aspect: "裁剪比例", free: "自由", originalRatio: "原圖", square: "正方形", rotateLeft: "向左旋轉 90°", rotateRight: "向右旋轉 90°", flipHorizontal: "水平翻轉", flipVertical: "垂直翻轉", lockRatio: "鎖定寬高比", outputSize: "輸出尺寸", original: "原圖", vivid: "鮮豔", mono: "黑白", sepia: "棕褐", warm: "暖色", cool: "冷色", vintage: "復古", dramatic: "高反差", fade: "褪色" },
+};
+
+const SCOPED_GEOMETRY_COPY: Record<Locale, string> = {
+  en: "Clear the selection or layer mask before changing image geometry.",
+  ja: "画像の形状を変更する前に、選択範囲またはレイヤーマスクを解除してください。",
+  "zh-CN": "请先清除选区或图层蒙版，再改变图像几何形状。",
+  "zh-TW": "請先清除選取範圍或圖層遮罩，再變更影像幾何形狀。",
 };
 
 export function RasterEditorDialog({ input, language, initialMode, onComplete }: Props): JSX.Element {
@@ -61,9 +69,12 @@ export function RasterEditorDialog({ input, language, initialMode, onComplete }:
 
   useEffect(() => {
     if (!ready) return;
-    const frame = requestAnimationFrame(() => render(sourceRef.current, canvasRef.current, state, MAX_PREVIEW_PIXELS));
+    const frame = requestAnimationFrame(() => {
+      try { render(sourceRef.current, canvasRef.current, state, MAX_PREVIEW_PIXELS, input.coverage); }
+      catch { setFailed(true); }
+    });
     return () => cancelAnimationFrame(frame);
-  }, [ready, state]);
+  }, [input.coverage, ready, state]);
 
   const update = (next: RasterAdjustments) => {
     setHistory((entries) => [...entries.slice(-39), state]);
@@ -90,23 +101,27 @@ export function RasterEditorDialog({ input, language, initialMode, onComplete }:
     setHistory((entries) => entries.slice(0, -1)); setState(previous);
   };
   const save = () => {
-    if (!sourceRef.current || !ready) return;
+    if (!sourceRef.current || !ready || failed || (input.coverage && hasGeometryChanges(state, input.width, input.height))) return;
     const canvas = document.createElement("canvas");
-    render(sourceRef.current, canvas, state);
-    const mimeType = ["image/png", "image/jpeg", "image/webp"].includes(input.mimeType) ? input.mimeType : "image/png";
+    try { render(sourceRef.current, canvas, state, undefined, input.coverage); }
+    catch { setFailed(true); return; }
+    const mimeType = editedRasterMimeType(input.mimeType, Boolean(input.coverage));
     onComplete({ kind: "saved", output: {
       dataUrl: canvas.toDataURL(mimeType), mimeType, width: canvas.width, height: canvas.height,
       resizeCanvas: hasGeometryChanges(state, input.width, input.height),
     } });
   };
 
-  const adjustTools: Array<[AdjustTool, ProductIconName, string]> = [["finetune", "adjust", t.finetune], ["crop", "crop", t.crop], ["rotate", "rotate-right", t.rotate], ["flip", "flip", t.flip], ["resize", "resize", t.resize]];
+  const adjustTools: Array<[AdjustTool, ProductIconName, string]> = input.coverage
+    ? [["finetune", "adjust", t.finetune]]
+    : [["finetune", "adjust", t.finetune], ["crop", "crop", t.crop], ["rotate", "rotate-right", t.rotate], ["flip", "flip", t.flip], ["resize", "resize", t.resize]];
   const dimensions = outputDimensions(state);
   return <div className="pixel-editor-backdrop" role="dialog" aria-modal="true" aria-label={initialMode === "filters" ? t.filters : t.adjust}>
     <div className="pixel-editor raster-editor">
-      <header><h2>{initialMode === "filters" ? t.filters : t.adjust}</h2><span className="editor-output-size">{dimensions.width} × {dimensions.height} px</span><button onClick={undo} disabled={!history.length}>{t.undo}</button><button onClick={reset}>{t.reset}</button><button onClick={() => onComplete({ kind: "cancelled" })}>{t.cancel}</button><button className="primary" disabled={!ready} onClick={save}>{t.apply}</button></header>
+      <header><h2>{initialMode === "filters" ? t.filters : t.adjust}</h2><span className="editor-output-size">{dimensions.width} × {dimensions.height} px</span><button onClick={undo} disabled={!history.length}>{t.undo}</button><button onClick={reset}>{t.reset}</button><button onClick={() => onComplete({ kind: "cancelled" })}>{t.cancel}</button><button className="primary" disabled={!ready || failed || Boolean(input.coverage && hasGeometryChanges(state, input.width, input.height))} onClick={save}>{t.apply}</button></header>
       <nav>{initialMode === "adjust" ? adjustTools.map(([name, icon, label]) => <button key={name} className={tool === name ? "active" : ""} onClick={() => setTool(name)}><ProductIcon name={icon} /><strong>{label}</strong></button>) : PRESETS.map((preset) => <button key={preset} className={isPreset(state, preset) ? "active" : ""} onClick={() => update(applyFilterPreset(state, preset))}><span className={`filter-chip filter-${preset}`} aria-hidden="true" /><strong>{t[preset]}</strong></button>)}</nav>
       <main className={initialMode === "filters" ? "editor-main-no-panel" : undefined}><div className="pixel-canvas-wrap raster-canvas-wrap">{!ready && <p>{failed ? t.failed : t.loading}</p>}<canvas ref={canvasRef} /></div>
+        {input.coverage && initialMode === "adjust" && <p className="panel-empty">{SCOPED_GEOMETRY_COPY[language]}</p>}
         {initialMode === "adjust" && <aside><AdjustPanel t={t} tool={tool} state={state} input={input} lockRatio={lockRatio} patch={patch} setCrop={setCrop} setRatio={setRatio} turn={turn} resize={resize} setLockRatio={setLockRatio} /></aside>}
       </main>
     </div>
@@ -121,8 +136,11 @@ function AdjustPanel({ t, tool, state, input, lockRatio, patch, setCrop, setRati
   return <><h3>{t.outputSize}</h3><div className="editor-number-grid"><label>{t.width}<input type="number" min="1" max={MAX_CANVAS_EDGE} value={state.resizeWidth} onChange={(event) => resize("width", Number(event.target.value))} /></label><label>{t.height}<input type="number" min="1" max={MAX_CANVAS_EDGE} value={state.resizeHeight} onChange={(event) => resize("height", Number(event.target.value))} /></label></div><label className="editor-check"><input type="checkbox" checked={lockRatio} onChange={(event) => setLockRatio(event.target.checked)} /> {t.lockRatio}</label></>;
 }
 
-function render(source: HTMLCanvasElement | null, canvas: HTMLCanvasElement | null, state: RasterAdjustments, maxPixels?: number): void {
+function render(source: HTMLCanvasElement | null, canvas: HTMLCanvasElement | null, state: RasterAdjustments, maxPixels?: number, coverage?: Uint8Array | null): void {
   if (!source || !canvas) return;
+  if (coverage && (coverage.length !== source.width * source.height || hasGeometryChanges(state, source.width, source.height))) {
+    throw new Error("Scoped image edit cannot change geometry");
+  }
   const dimensions = outputDimensions(state);
   const scale = maxPixels && dimensions.width * dimensions.height > maxPixels
     ? Math.sqrt(maxPixels / (dimensions.width * dimensions.height)) : 1;
@@ -132,6 +150,28 @@ function render(source: HTMLCanvasElement | null, canvas: HTMLCanvasElement | nu
   context.save(); context.translate(canvas.width / 2, canvas.height / 2); context.scale(state.flipX ? -1 : 1, state.flipY ? -1 : 1); context.rotate(state.rotation * Math.PI / 180); context.filter = canvasFilter(state);
   context.drawImage(source, state.crop.x, state.crop.y, state.crop.width, state.crop.height, -state.resizeWidth * scale / 2, -state.resizeHeight * scale / 2, state.resizeWidth * scale, state.resizeHeight * scale); context.restore();
   if (pixelAdjustment) applyPixelAdjustments(context, canvas.width, canvas.height, state);
+  if (coverage) {
+    const original = document.createElement("canvas");
+    original.width = canvas.width; original.height = canvas.height;
+    const originalContext = original.getContext("2d", { willReadFrequently: true });
+    if (!originalContext) throw new Error("Scoped image preview is unavailable");
+    originalContext.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const before = originalContext.getImageData(0, 0, canvas.width, canvas.height);
+    const after = context.getImageData(0, 0, canvas.width, canvas.height);
+    let previewCoverage = coverage;
+    if (scale !== 1) {
+      previewCoverage = new Uint8Array(canvas.width * canvas.height);
+      for (let y = 0; y < canvas.height; y += 1) for (let x = 0; x < canvas.width; x += 1) {
+        const sourceX = Math.min(source.width - 1, Math.floor(x / scale));
+        const sourceY = Math.min(source.height - 1, Math.floor(y / scale));
+        previewCoverage[y * canvas.width + x] = coverage[sourceY * source.width + sourceX];
+      }
+    }
+    after.data.set(constrainRgbaToCoverage(before.data, after.data, previewCoverage,
+      canvas.width, canvas.height, 0, 0, canvas.width, canvas.height));
+    context.putImageData(after, 0, 0);
+    original.width = 1; original.height = 1;
+  }
 }
 
 function applyPixelAdjustments(context: CanvasRenderingContext2D, width: number, height: number, state: RasterAdjustments): void {

@@ -39,6 +39,7 @@ import { requestNativeColor, sampledPixelColor, type EyeDropperConstructor } fro
 import { DocumentHistory } from "../domain/history";
 import { PixelTileArchive } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
+import { resolveRasterEditCoverage } from "../domain/editCoverage";
 import { bindConfiguredShortcuts, loadShortcuts, SHORTCUT_ACTIONS, type ShortcutAction } from "../domain/shortcutSettings";
 import { FileMenu, type DeliveryFormat } from "./FileMenu";
 import { clearPreviewTileCache, previewStorageStatus } from "./previewTiles";
@@ -154,6 +155,7 @@ export function Studio(): JSX.Element {
     refreshHistory((value) => value + 1);
   }, []);
   const canRecordPixel = useCallback((diffs: Parameters<DocumentHistory["canRecordPixel"]>[0]) => historyRef.current.canRecordPixel(diffs), []);
+  const canRecordPixelBytes = useCallback((bytes: number) => historyRef.current.canRecordPixelBytes(bytes), []);
 
   const editSelectedElement = (element: AnnotationElement, field: string) => {
     if (!selected || selected.type !== "annotation" || !selectedEditable) return;
@@ -173,7 +175,7 @@ export function Studio(): JSX.Element {
     directPixelCanvasRef, directPixelLayerIdRef, activePointerIdRef,
     beginPointer, movePointer, endPointer, clearPixelSelection, invertPixelSelection, restorePixelHistory,
   } = useRasterToolSession({
-    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel,
+    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelBytes,
     brushSettings, brushSize, paintColor, changePaintColor, maskValue, magicTolerance, selectionOperation, smudgeStrength, pixelOpacity,
     gradientTransparent, gradientEndColor, shapeTool, textTemplate, shapeTemplate, locale, setError,
     setTool, setInspectorTab, setSelectedElementId, setTextFocusRequest,
@@ -264,6 +266,7 @@ export function Studio(): JSX.Element {
     const snapshot = documentRef.current;
     const sourceLayer = snapshot.layers.find((candidate) => candidate.id === sourceLayerId);
     if (!sourceLayer || sourceLayer.type !== "raster" || sourceLayer.locked) return;
+    if (sourceLayer.rasterMaskId) { setError("editFailed"); return; }
     try {
       const pairDocument = {
         ...snapshot,
@@ -294,7 +297,9 @@ export function Studio(): JSX.Element {
       else if (action === "fit") fitView();
       else if (action === "eyedropper") void pickScreenColor();
       else {
-        if ((SECONDARY_TOOLS.includes(action) || SELECTION_TOOLS.includes(action)) && (selected?.type !== "raster" || !selectedEditable || selectedRasterTooLarge)) return;
+        if (SECONDARY_TOOLS.includes(action) && (selected?.type !== "raster" || !selectedEditable || selectedRasterTooLarge)) return;
+        if (SELECTION_TOOLS.includes(action) && (!selected || !["raster", "paint", "annotation"].includes(selected.type)
+          || !selectedEditable || (action === "magicWand" && (selected.type !== "raster" || selectedRasterTooLarge)))) return;
         if ((action === "brush" || action === "eraser") && selectedRasterTooLarge) return;
         setTool(action); setInspectorTab("properties");
       }
@@ -419,12 +424,18 @@ export function Studio(): JSX.Element {
         <ToolRail tool={tool} shapeTool={shapeTool} labels={toolLabels} toolLabel={toolLabel} t={t}
           perspectiveLabel={perspectiveCopy[locale].title} oversizedRaster={Boolean(selectedRasterTooLarge)}
           rasterToolDisabled={!selected || selected.type !== "raster" || !selectedEditable || Boolean(selectedRasterTooLarge)}
+          selectionToolDisabled={!selected || !["raster", "paint", "annotation"].includes(selected.type) || !selectedEditable}
+          magicWandDisabled={selected?.type !== "raster" || !selectedEditable || Boolean(selectedRasterTooLarge)}
           canEditRaster={Boolean(selected?.type === "raster" && selectedEditable)}
           canUseAi={Boolean(selected?.type === "raster" && selectedEditable && projectId && persistence === "saved" && document.metadata.updatedAt === lastSavedUpdatedAtRef.current)}
           onActivate={activateTool} onShapeChange={setShapeTool} onPickColor={() => void pickScreenColor()}
           onOpenRasterEditor={(mode) => {
             if (selected?.type !== "raster") return;
-            setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name });
+            try {
+              const coverage = resolveRasterEditCoverage(document, selected, pixelSelection?.layerId === selected.id ? pixelSelection : null);
+              if (mode === "Perspective" && coverage) { setError("editFailed"); return; }
+              setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name, coverage });
+            } catch { setError("editFailed"); }
           }} onOpenAi={() => setAiOpen(true)} />
         <section className="canvas-column">
           <div className={`canvas-surface tool-${tool}`} ref={surfaceRef} aria-label={t("canvasLabel")} tabIndex={0} onPointerLeave={() => setCursorPreview(null)}
@@ -485,7 +496,7 @@ export function Studio(): JSX.Element {
             <Layer listening={false}>
               <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
-                {selected?.type === "raster" && <Group x={selected.transform.x} y={selected.transform.y}
+                {selected && (selected.type === "raster" || selected.type === "paint" || selected.type === "annotation") && <Group x={selected.transform.x} y={selected.transform.y}
                   scaleX={selected.transform.scaleX} scaleY={selected.transform.scaleY} rotation={selected.transform.rotation}>
                   {selectionPreview && pixelSelection?.layerId === selected.id && <KonvaImage image={selectionPreview} width={selected.width} height={selected.height} opacity={0.72} />}
                   {marqueeDraft && tool === "marquee" && <Rect x={Math.min(marqueeDraft.start.x, marqueeDraft.end.x)} y={Math.min(marqueeDraft.start.y, marqueeDraft.end.y)}

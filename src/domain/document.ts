@@ -2,6 +2,7 @@ import type { Point, Transform2D } from "../../../shared/canvas";
 import { createBrushSettings, type BrushSettings, type StrokeSample } from "./brushEngine";
 import {
   IMAGE_STUDIO_DOCUMENT_VERSION,
+  MAX_SELECTION_MASK_RUNS,
   normalizeImageStudioDocument,
 } from "../../../../frontend/src/shared/imageStudioDocumentContract";
 import {
@@ -9,7 +10,7 @@ import {
   type AdjustmentKind, type AnnotationElementKind, type LayerBlendMode,
 } from "../../../../frontend/src/shared/imageStudioDomain";
 
-export { IMAGE_STUDIO_DOCUMENT_VERSION, ADJUSTMENT_KINDS, ANNOTATION_ELEMENT_KINDS, LAYER_BLEND_MODES };
+export { IMAGE_STUDIO_DOCUMENT_VERSION, MAX_SELECTION_MASK_RUNS, ADJUSTMENT_KINDS, ANNOTATION_ELEMENT_KINDS, LAYER_BLEND_MODES };
 export type { AdjustmentKind, AnnotationElementKind, LayerBlendMode };
 
 export type { Point } from "../../../shared/canvas";
@@ -58,6 +59,8 @@ export interface DrawingLayer extends LayerBase {
   width: number;
   height: number;
   strokes: Stroke[];
+  /** v10 compact row-major binary base for a selection-derived local mask. */
+  selectionRuns?: number[];
 }
 
 export interface AnnotationTextElement {

@@ -1,4 +1,5 @@
 import { canvasBlendMode, rasterSourceUrl, type AnnotationLayer, type DrawingLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer } from "./document";
+import { paintSelectionRuns } from "./selectionMaskRuns";
 import { createBrushDabs, renderBrushDabs } from "./brushEngine";
 import { adjustmentKernel, ADJUSTMENT_CHUNK_PIXELS, applySpatialAdjustment, isSpatialAdjustment, spatialRadius, yieldRenderTask } from "./adjustmentEngine";
 import { adjacentMaskLayerIds } from "./adjustmentMasking";
@@ -251,7 +252,11 @@ async function renderSingleLayer(
 function rasterMaskFor(document: ImageStudioDocument, layer: ImageStudioLayer): { layer: DrawingLayer; inverted: boolean; featherPx: number } | undefined {
   if (!layer.rasterMaskId) return undefined;
   const mask = document.layers.find((candidate) => candidate.id === layer.rasterMaskId);
-  return mask?.type === "mask" ? { layer: mask, inverted: layer.rasterMaskInverted === true, featherPx: layer.rasterMaskFeatherPx ?? 0 } : undefined;
+  if (!mask || mask.type !== "mask" || mask.parentId !== layer.parentId
+    || mask.width !== layer.width || mask.height !== layer.height) {
+    throw new Error("Raster mask binding is invalid");
+  }
+  return { layer: mask, inverted: layer.rasterMaskInverted === true, featherPx: layer.rasterMaskFeatherPx ?? 0 };
 }
 
 /** Applies grayscale×alpha mask weight, not merely its alpha channel. */
@@ -264,13 +269,15 @@ function applyRasterMask(
     const padding = Math.ceil(featherPx * scale * 3);
     const blurred = createCanvas(maskCanvas.width + padding * 2, maskCanvas.height + padding * 2);
     const blurredContext = blurred.getContext("2d");
-    if (blurredContext) { blurredContext.filter = `blur(${featherPx * scale}px)`; blurredContext.drawImage(maskCanvas, padding, padding); }
+    if (!blurredContext) throw new Error("Raster mask canvas is unavailable");
+    blurredContext.filter = `blur(${featherPx * scale}px)`;
+    blurredContext.drawImage(maskCanvas, padding, padding);
     maskCanvas.width = 1; maskCanvas.height = 1;
     maskCanvas = blurred;
   }
   const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true });
   const targetContext = target.getContext("2d");
-  if (!maskContext || !targetContext) { maskCanvas.width = 1; maskCanvas.height = 1; return; }
+  if (!maskContext || !targetContext) { maskCanvas.width = 1; maskCanvas.height = 1; throw new Error("Raster mask canvas is unavailable"); }
   const image = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
   for (let index = 0; index < image.data.length; index += 4) {
     const weight = image.data[index + 3] / 255 * (image.data[index] + image.data[index + 1] + image.data[index + 2]) / 765;
@@ -370,6 +377,7 @@ export function renderDrawingLayer(layer: DrawingLayer, createCanvas: (width: nu
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas export is unavailable");
   context.scale(scale, scale);
+  if (layer.type === "mask" && layer.selectionRuns) paintSelectionRuns(context, layer.selectionRuns, layer.width, layer.height);
   for (const stroke of layer.strokes) {
     if (!stroke.points.length) continue;
     const color = layer.type === "mask" ? `rgb(${stroke.value},${stroke.value},${stroke.value})` : stroke.color ?? "#111827";

@@ -1,7 +1,7 @@
 import { createEmptyDocument, type AnnotationElement } from "../domain/document";
 import { addLayer, createAnnotationLayer, patchLayer, setAnnotationElements } from "../domain/commands";
 import { rasterLayerFromImage } from "../domain/importImage";
-import { exportFilename, exportImage, planExport } from "../domain/exportImage";
+import { exportFilename, exportImage, planExport, renderImageStudioDocument } from "../domain/exportImage";
 
 describe("Image Studio export", () => {
   it("plans exact output dimensions and rejects unsafe memory use", () => {
@@ -30,6 +30,17 @@ describe("Image Studio export", () => {
 
   it("creates filesystem-safe filenames", () => {
     expect(exportFilename(" bad/name:* ", "jpeg")).toBe("bad-name-.jpg");
+  });
+
+  it("rejects a broken linked mask instead of exporting its owner unmasked", async () => {
+    const raster = rasterLayerFromImage({ dataUrl: "data:image/png;base64,AA==", mimeType: "image/png", width: 10, height: 10, name: "Layer" });
+    const document = { ...createEmptyDocument(), layers: [{ ...raster, rasterMaskId: "missing" }] };
+    const createCanvas = (width: number, height: number) => ({
+      width, height, getContext: () => ({ scale() {}, save() {}, restore() {}, drawImage() {} }),
+    }) as unknown as HTMLCanvasElement;
+    await expect(renderImageStudioDocument(document, {
+      createCanvas, loadImage: async () => ({}) as CanvasImageSource,
+    })).rejects.toThrow("Raster mask binding is invalid");
   });
 
   it("applies the persisted layer blend mode during export", async () => {

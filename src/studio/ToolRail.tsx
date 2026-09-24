@@ -14,6 +14,8 @@ interface ToolRailProps {
   t: (key: MessageKey) => string;
   perspectiveLabel: string;
   rasterToolDisabled: boolean;
+  selectionToolDisabled: boolean;
+  magicWandDisabled: boolean;
   oversizedRaster: boolean;
   canEditRaster: boolean;
   canUseAi: boolean;
@@ -27,7 +29,7 @@ interface ToolRailProps {
 /** Owns the complete direct-tool presentation while Studio retains command orchestration. */
 export function ToolRail(props: ToolRailProps): JSX.Element {
   const {
-    tool, shapeTool, labels, toolLabel, t, perspectiveLabel, rasterToolDisabled,
+    tool, shapeTool, labels, toolLabel, t, perspectiveLabel, rasterToolDisabled, selectionToolDisabled, magicWandDisabled,
     oversizedRaster, canEditRaster, canUseAi, onActivate, onShapeChange,
     onPickColor, onOpenRasterEditor, onOpenAi,
   } = props;
@@ -41,7 +43,7 @@ export function ToolRail(props: ToolRailProps): JSX.Element {
         <ProductIcon name={SELECTION_TOOLS.includes(tool) ? TOOL_ICONS[tool] : TOOL_ICONS.marquee} />
       </summary>
       <div>{SELECTION_TOOLS.map((name) => <button key={name} className={tool === name ? "active" : ""}
-        aria-label={toolLabel(name)} title={toolLabel(name)} disabled={rasterToolDisabled}
+        aria-label={toolLabel(name)} title={toolLabel(name)} disabled={name === "magicWand" ? magicWandDisabled : selectionToolDisabled}
         onClick={(event) => { onActivate(name); closeMenu(event); }}><ProductIcon name={TOOL_ICONS[name]} /></button>)}</div>
     </details>
     {BASIC_DRAWING_TOOLS.map((name) => <ToolButton key={name} name={name} active={tool === name} label={toolLabel(name)}

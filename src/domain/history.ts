@@ -101,7 +101,11 @@ export class DocumentHistory {
   }
 
   canRecordPixel(diffs: readonly PixelTileDiff[]): boolean {
-    return diffs.length > 0 && pixelTileDiffBytes(diffs) <= this.options.maxBytes;
+    return diffs.length > 0 && this.canRecordPixelBytes(pixelTileDiffBytes(diffs));
+  }
+
+  canRecordPixelBytes(bytes: number): boolean {
+    return Number.isSafeInteger(bytes) && bytes > 0 && bytes <= this.options.maxBytes;
   }
 
   retainedAssetIds(): string[] {

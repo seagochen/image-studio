@@ -1,5 +1,5 @@
 import type { DrawingLayer } from "../domain/document";
-import { renderDrawingLayer } from "../domain/exportImage";
+import { coverageFromDrawingMask } from "../domain/editCoverage";
 import type { PixelSelectionMask } from "../domain/pixelTools";
 
 /** Encodes Image Studio's local mask sources for models whose manifest declares mask_file.
@@ -19,26 +19,41 @@ export async function maskInputFromSelection(selection: PixelSelectionMask): Pro
   return canvasBlob(canvas);
 }
 
-export async function maskInputFromLayer(layer: DrawingLayer, options: { inverted?: boolean; featherPx?: number } = {}): Promise<Blob> {
-  const canvas = renderDrawingLayer(layer, createCanvas);
-  const context = canvas.getContext("2d", { willReadFrequently: true });
+export async function maskInputFromLayer(
+  layer: DrawingLayer, options: { inverted?: boolean; featherPx?: number } = {}, selection?: PixelSelectionMask | null,
+): Promise<Blob> {
+  const coverage = coverageFromDrawingMask(layer, options.inverted === true, options.featherPx ?? 0, createCanvas);
+  const canvas = createCanvas(layer.width, layer.height);
+  const context = canvas.getContext("2d");
   if (!context) throw new Error("Mask encoding is unavailable");
-  const image = context.getImageData(0, 0, canvas.width, canvas.height);
-  for (let index = 0; index < image.data.length; index += 4) {
-    const value = Math.round(image.data[index + 3] / 255 * (image.data[index] + image.data[index + 1] + image.data[index + 2]) / 3);
-    const output = options.inverted ? 255 - value : value;
-    image.data[index] = output; image.data[index + 1] = output; image.data[index + 2] = output; image.data[index + 3] = 255;
+  try {
+    const image = context.createImageData(layer.width, layer.height);
+    for (let index = 0; index < coverage.length; index += 1) {
+      const value = coverage[index];
+      const offset = index * 4;
+      image.data[offset] = value; image.data[offset + 1] = value; image.data[offset + 2] = value; image.data[offset + 3] = 255;
+    }
+    if (selection) {
+      intersectOpaqueMaskData(image.data, canvas.width, canvas.height, selection);
+    }
+    context.putImageData(image, 0, 0);
+    return await canvasBlob(canvas);
   }
-  context.putImageData(image, 0, 0);
-  if (options.featherPx && options.featherPx > 0) {
-    const source = createCanvas(canvas.width, canvas.height);
-    source.getContext("2d")?.drawImage(canvas, 0, 0);
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.save(); context.filter = `blur(${options.featherPx}px)`; context.drawImage(source, 0, 0); context.restore();
-    source.width = 1; source.height = 1;
-  }
-  try { return await canvasBlob(canvas); }
   finally { canvas.width = 1; canvas.height = 1; }
+}
+
+/** A temporary selection narrows a durable mask; it must never replace it. */
+export function intersectOpaqueMaskData(
+  rgba: Uint8ClampedArray, width: number, height: number, selection: PixelSelectionMask,
+): void {
+  if (selection.width !== width || selection.height !== height || selection.pixels.length !== width * height || rgba.length !== width * height * 4) {
+    throw new Error("Selection and mask dimensions do not match");
+  }
+  for (let index = 0; index < selection.pixels.length; index += 1) {
+    if (selection.pixels[index]) continue;
+    const offset = index * 4;
+    rgba[offset] = 0; rgba[offset + 1] = 0; rgba[offset + 2] = 0; rgba[offset + 3] = 255;
+  }
 }
 
 function createCanvas(width: number, height: number): HTMLCanvasElement {

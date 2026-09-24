@@ -1,6 +1,6 @@
 import {
-  clearSelectedPixels, combineSelectionMask, constrainRgbaToSelection, contiguousColorSelectionMask, createSeededRandom, ellipticalSelectionMask,
-  interpolatedPoints, invertSelectionMask, mixChannelRange, polygonSelectionMask, rectangularSelectionMask,
+  clearSelectedTile, combineSelectionMask, constrainRgbaToSelection, contiguousColorSelectionMask, createSeededRandom, ellipticalSelectionMask,
+  interpolatedPoints, invertSelectionMask, mixChannelRange, polygonSelectionMask, rectangularSelectionMask, selectedTileRects,
 } from "../domain/pixelTools";
 
 describe("Image Studio pixel tools", () => {
@@ -77,10 +77,21 @@ describe("Image Studio pixel tools", () => {
     expect([...constrainRgbaToSelection(before, after, selection, 0, 0, 2, 1)]).toEqual([10, 20, 30, 255, 88, 88, 88, 255]);
   });
 
-  test("pixel deletion clears only selected RGBA values", () => {
+  test("tile deletion clears only selected RGBA values", () => {
     const rgba = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255]);
-    const output = clearSelectedPixels(rgba, { width: 2, height: 1, pixels: new Uint8Array([0, 1]) });
+    const output = clearSelectedTile(rgba, { width: 3, height: 1, pixels: new Uint8Array([0, 0, 1]) }, 1, 0, 2, 1);
     expect([...output]).toEqual([255, 0, 0, 255, 0, 0, 0, 0]);
     expect([...rgba]).toEqual([255, 0, 0, 255, 0, 255, 0, 255]);
+    expect(() => clearSelectedTile(rgba, { width: 3, height: 1, pixels: new Uint8Array([0, 0, 1]) }, 2, 0, 2, 1)).toThrow();
+  });
+
+  test("supports standard 4K selections and captures only touched history tiles", () => {
+    const selection = rectangularSelectionMask(4096, 4096, { x: 255, y: 300 }, { x: 256, y: 300 });
+    expect(selection.pixels.byteLength).toBe(4096 * 4096);
+    expect(selectedTileRects(selection, 256)).toEqual([
+      { x: 0, y: 256, width: 256, height: 256 },
+      { x: 256, y: 256, width: 256, height: 256 },
+    ]);
+    expect(() => rectangularSelectionMask(10_000, 10_000, { x: 0, y: 0 }, { x: 1, y: 1 })).toThrow("Invalid selection dimensions");
   });
 });

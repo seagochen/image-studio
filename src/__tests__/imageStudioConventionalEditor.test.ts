@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { applyConventionalEditorOutcome } from "../adapters/conventionalEditor";
-import { replaceRasterLayer, replaceRasterPixels } from "../domain/commands";
+import { createAttachedRasterMask, replaceRasterLayer, replaceRasterPixels } from "../domain/commands";
 import { createEmptyDocument } from "../domain/document";
 import { rasterLayerFromImage } from "../domain/importImage";
 import { DocumentHistory } from "../domain/history";
@@ -54,6 +54,18 @@ describe("conventional editor adapter", () => {
   it("does not mutate missing, non-raster, or locked layers", () => {
     const document = createEmptyDocument();
     expect(replaceRasterLayer(document, "missing", { width: 1, height: 1, source: { kind: "data-url", value: DATA_URL, mimeType: "image/png" } })).toBe(document);
+  });
+
+  it("rejects a size-changing replacement while a raster mask is linked", () => {
+    const empty = createEmptyDocument();
+    const raster = rasterLayerFromImage({ dataUrl: DATA_URL, mimeType: "image/png", width: 100, height: 80, name: "input.png" });
+    const mask = createAttachedRasterMask(empty, raster, "Mask");
+    const document = { ...empty, layers: [{ ...raster, rasterMaskId: mask.id }, mask] };
+    const replacement = { width: 80, height: 100, source: { kind: "data-url" as const, value: DATA_URL, mimeType: "image/png" } };
+    expect(replaceRasterLayer(document, raster.id, replacement)).toBe(document);
+    expect(applyConventionalEditorOutcome(document, raster.id, { kind: "saved", output: {
+      dataUrl: DATA_URL, mimeType: "image/png", width: 80, height: 100, resizeCanvas: true,
+    } })).toBe(document);
   });
 
   it("replaces direct pixel edits without resetting the layer transform", () => {

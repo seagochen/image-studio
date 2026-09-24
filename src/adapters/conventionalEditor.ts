@@ -7,6 +7,8 @@ export interface ConventionalEditorInput {
   width: number;
   height: number;
   name: string;
+  /** Raster-local editable weights, captured when the editor opens. */
+  coverage?: Uint8Array | null;
 }
 
 export interface ConventionalEditorOutput {

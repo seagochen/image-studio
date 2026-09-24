@@ -40,8 +40,7 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
   const closeRef = useRef<HTMLButtonElement>(null);
   const orchestrator = useMemo(() => new AiEditOrchestrator({ gateway: new HttpAiRunGateway(), currentRevision }), [currentRevision]);
   const selectedMode = modes.find((mode) => mode.id === modeId);
-  // A temporary selection is the most recent explicit targeting intent. A linked mask
-  // remains the fallback and is retained as the durable operation reference.
+  // Both local boundaries must constrain the submitted image mask.
   const hasMaskInput = Boolean(pixelSelection || maskLayer);
 
   useEffect(() => {
@@ -77,7 +76,7 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
     const resumable = operation && isRecoverableOperation(operation, selectedMode.id) ? operation : null;
     const next = resumable ?? orchestrator.createOperation({
       id: createId("ai-operation"), projectId, baseRevision: projectRevision, mode: selectedMode.id,
-      inputLayerId: layer.id, maskLayerId: selectedMode.maskField && !pixelSelection ? maskLayer?.id ?? null : null, parameters, baseDocumentRevision: revision,
+      inputLayerId: layer.id, maskLayerId: selectedMode.maskField ? maskLayer?.id ?? null : null, parameters, baseDocumentRevision: revision,
       retryOf: operation?.id ?? null, recipeId: null, stepIndex: null,
     });
     setOperation({ ...next, status: next.runId ? "running" : "submitting" });
@@ -85,8 +84,8 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
     try {
       const input = next.runId ? new Blob() : await rasterSourceToBlob(layer);
       const mask = next.runId || !selectedMode.maskField ? undefined
-        : pixelSelection ? { field: selectedMode.maskField, file: await maskInputFromSelection(pixelSelection) }
-          : maskLayer ? { field: selectedMode.maskField, file: await maskInputFromLayer(maskLayer, { inverted: maskInverted, featherPx: maskFeatherPx }) } : undefined;
+        : maskLayer ? { field: selectedMode.maskField, file: await maskInputFromLayer(maskLayer, { inverted: maskInverted, featherPx: maskFeatherPx }, pixelSelection) }
+          : pixelSelection ? { field: selectedMode.maskField, file: await maskInputFromSelection(pixelSelection) } : undefined;
       if (selectedMode.maskRequired && !mask && !next.runId) throw new Error(t("aiMaskRequired"));
       const outcome = await orchestrator.run(next, input, controller.signal, mask);
       setOperation(outcome.operation);

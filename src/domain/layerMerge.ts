@@ -18,6 +18,7 @@ export function planLayerMerge(document: ImageStudioDocument, layerId: string, d
   // whatever is below it, so masks are excluded from the sibling list used to find a neighbor.
   const masks = new Set(document.layers.filter((layer) => layer.type === "adjustment")
     .flatMap((layer) => adjacentMaskLayerIds(document.layers, layer)));
+  for (const layer of document.layers) if (layer.rasterMaskId) masks.add(layer.rasterMaskId);
   const siblings = document.layers.filter((layer) => (layer.parentId ?? null) === (source.parentId ?? null) && !masks.has(layer.id));
   const index = siblings.indexOf(source);
   const target = siblings[index + direction];
@@ -29,6 +30,7 @@ export function planLayerMerge(document: ImageStudioDocument, layerId: string, d
   const includedIds = new Set(pair.map((layer) => layer.id));
   const removedIds = new Set(includedIds);
   for (const layer of pair) {
+    if (layer.rasterMaskId) { includedIds.add(layer.rasterMaskId); removedIds.add(layer.rasterMaskId); }
     if (layer.type !== "adjustment") continue;
     for (const maskId of adjacentMaskLayerIds(document.layers, layer)) { includedIds.add(maskId); removedIds.add(maskId); }
   }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Locale, MessageKey } from "../i18n";
 import {
-  canGroupLayers, deleteLayer, groupLayers, patchLayer, reorderLayer, ungroupLayer, type LayerDropPosition,
+  canGroupLayers, canUngroupLayer, deleteLayer, groupLayers, patchLayer, reorderLayer, ungroupLayer, type LayerDropPosition,
 } from "../domain/commands";
 import { LAYER_BLEND_MODES, type AdjustmentKind, type ImageStudioDocument, type ImageStudioLayer, type LayerBlendMode } from "../domain/document";
 import { planLayerMerge } from "../domain/layerMerge";
@@ -57,7 +57,8 @@ export function LayerPanel(props: Props): JSX.Element {
     </div> : <p className="panel-empty">{t("noSelection")}</p>}
     <div className="layer-list">{displayLayers.map(({ layer, depth }) => {
       const groupedWithSelection = multiSelectedIds.length >= 2 && multiSelectedIds.includes(layer.id);
-      const groupDisabled = layer.locked || (groupedWithSelection ? !canGroupMultiSelection : !hasGroupableNeighbor(document.layers, layer));
+      const neighbor = groupableNeighbor(document.layers, layer);
+      const groupDisabled = layer.locked || (groupedWithSelection ? !canGroupMultiSelection : !neighbor || !canGroupLayers(document, [neighbor.id, layer.id]));
       return <div key={layer.id} className={`layer-row ${selected?.id === layer.id ? "selected" : ""} ${multiSelectedIds.includes(layer.id) ? "multi-selected" : ""} ${layerDrop?.targetId === layer.id ? `drop-${visualLayerDropPosition(layerDrop.position)}` : ""}`} draggable={!layer.locked}
         onDragStart={() => { setDraggedLayerId(layer.id); setLayerDrop(null); }} onDragEnd={() => { setDraggedLayerId(null); setLayerDrop(null); }}
         onDragOver={(event) => { event.preventDefault(); if (draggedLayerId && draggedLayerId !== layer.id) setLayerDrop({ targetId: layer.id, position: layerDropPosition(event.clientY, event.currentTarget.getBoundingClientRect(), layer.type === "group") }); }}
@@ -79,7 +80,7 @@ export function LayerPanel(props: Props): JSX.Element {
           <button disabled={!planLayerMerge(document, layer.id, 1)} title={LAYER_UI[locale].mergeHelp} onClick={() => props.onMergeLayer(layer.id, 1)}>{LAYER_UI[locale].mergeUp}</button>
           <button disabled={!planLayerMerge(document, layer.id, -1)} title={LAYER_UI[locale].mergeHelp} onClick={() => props.onMergeLayer(layer.id, -1)}>{LAYER_UI[locale].mergeDown}</button>
           <button disabled={groupDisabled} title={LAYER_UI[locale].groupHelp} onClick={() => commit((current) => { if (groupedWithSelection) { const grouped = groupLayers(current, multiSelectedIds, LAYER_UI[locale].groupName); if (grouped !== current) setMultiSelectedIds([]); return grouped; } const siblings = current.layers.filter((candidate) => (candidate.parentId ?? null) === (layer.parentId ?? null)); const index = siblings.findIndex((candidate) => candidate.id === layer.id); const neighbor = siblings[index - 1] ?? siblings[index + 1]; return neighbor ? groupLayers(current, [neighbor.id, layer.id], LAYER_UI[locale].groupName) : current; }, "Group layers")}>{LAYER_UI[locale].group}</button>
-          <button disabled={layer.locked || (layer.type !== "group" && !layer.parentId)} onClick={() => commit((current) => ungroupLayer(current, layer.id), "Ungroup layers")}>{LAYER_UI[locale].ungroup}</button>
+          <button disabled={!canUngroupLayer(document, layer.id)} onClick={() => commit((current) => ungroupLayer(current, layer.id), "Ungroup layers")}>{LAYER_UI[locale].ungroup}</button>
           <button className="danger" disabled={layer.locked} onClick={() => commit((current) => deleteLayer(current, layer.id), "Delete layer")}>{t("remove")}</button>
         </div></details>
       </div>;
@@ -111,8 +112,8 @@ function visualLayerDropPosition(position: LayerDropPosition): LayerDropPosition
   return position === "before" ? "after" : position === "after" ? "before" : "inside";
 }
 
-function hasGroupableNeighbor(layers: ImageStudioLayer[], layer: ImageStudioLayer): boolean {
+function groupableNeighbor(layers: ImageStudioLayer[], layer: ImageStudioLayer): ImageStudioLayer | undefined {
   const siblings = layers.filter((candidate) => (candidate.parentId ?? null) === (layer.parentId ?? null));
   const index = siblings.findIndex((candidate) => candidate.id === layer.id);
-  return Boolean(siblings[index - 1] ?? siblings[index + 1]);
+  return siblings[index - 1] ?? siblings[index + 1];
 }

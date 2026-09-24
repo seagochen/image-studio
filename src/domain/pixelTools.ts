@@ -1,3 +1,5 @@
+import { MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS } from "../../../../frontend/src/shared/imageResourceLimits";
+
 export interface ChannelMultipliers {
   red: number;
   green: number;
@@ -222,24 +224,46 @@ export function contiguousColorSelectionMask(
   return { width, height, pixels };
 }
 
-export function clearSelectedPixels(rgba: Uint8ClampedArray, selection: PixelSelectionMask): Uint8ClampedArray {
-  if (rgba.length !== selection.width * selection.height * 4 || selection.pixels.length !== selection.width * selection.height) {
-    throw new Error("Selection dimensions do not match pixel buffer");
+export function clearSelectedTile(
+  rgba: Uint8ClampedArray, selection: PixelSelectionMask, tileX: number, tileY: number, width: number, height: number,
+): Uint8ClampedArray {
+  assertSelectionDimensions(selection.width, selection.height);
+  if (selection.pixels.length !== selection.width * selection.height || rgba.length !== width * height * 4
+    || !Number.isInteger(tileX) || !Number.isInteger(tileY) || !Number.isInteger(width) || !Number.isInteger(height)
+    || tileX < 0 || tileY < 0 || width < 1 || height < 1 || tileX + width > selection.width || tileY + height > selection.height) {
+    throw new Error("Selection dimensions do not match tile buffer");
   }
   const output = new Uint8ClampedArray(rgba);
-  for (let index = 0; index < selection.pixels.length; index += 1) {
-    if (!selection.pixels[index]) continue;
-    const offset = index * 4;
-    output[offset] = 0;
-    output[offset + 1] = 0;
-    output[offset + 2] = 0;
-    output[offset + 3] = 0;
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    if (selection.pixels[(tileY + y) * selection.width + tileX + x]) output.fill(0, (y * width + x) * 4, (y * width + x + 1) * 4);
   }
   return output;
 }
 
+export function selectedTileRects(selection: PixelSelectionMask, edge: number): Array<{ x: number; y: number; width: number; height: number }> {
+  assertSelectionDimensions(selection.width, selection.height);
+  if (selection.pixels.length !== selection.width * selection.height || !Number.isInteger(edge) || edge < 1) {
+    throw new Error("Invalid selection tile dimensions");
+  }
+  const columns = Math.ceil(selection.width / edge);
+  const flags = new Uint8Array(columns * Math.ceil(selection.height / edge));
+  for (let index = 0; index < selection.pixels.length; index += 1) {
+    if (!selection.pixels[index]) continue;
+    const x = index % selection.width, y = Math.floor(index / selection.width);
+    flags[Math.floor(y / edge) * columns + Math.floor(x / edge)] = 1;
+  }
+  const rects = [];
+  for (let index = 0; index < flags.length; index += 1) {
+    if (!flags[index]) continue;
+    const x = (index % columns) * edge, y = Math.floor(index / columns) * edge;
+    rects.push({ x, y, width: Math.min(edge, selection.width - x), height: Math.min(edge, selection.height - y) });
+  }
+  return rects;
+}
+
 function assertSelectionDimensions(width: number, height: number): void {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 || width * height > 16_000_000) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
+    || width > MAX_IMAGE_EDGE || height > MAX_IMAGE_EDGE || width * height > MAX_IMAGE_PIXELS) {
     throw new Error("Invalid selection dimensions");
   }
 }

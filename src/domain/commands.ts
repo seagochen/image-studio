@@ -1,6 +1,8 @@
 import { layerAncestors, layerIsEditable } from "./layerHierarchy";
 import { planLayerMerge } from "./layerMerge";
 import { adjacentMaskLayerIds } from "./adjustmentMasking";
+import { encodeSelectionRuns } from "./selectionMaskRuns";
+import type { PixelSelectionMask } from "./pixelTools";
 import {
   cloneDocument,
   createId,
@@ -61,8 +63,11 @@ export function attachPaintAsRasterMask(document: ImageStudioDocument, paintId: 
   const paint = document.layers.find((layer) => layer.id === paintId);
   const owner = document.layers.find((layer) => layer.id === ownerId);
   if (!paint || paint.type !== "paint" || !owner || !["raster", "paint", "annotation", "group"].includes(owner.type)
-    || owner.id === paint.id || owner.locked || owner.rasterMaskId || paint.parentId !== owner.parentId || paint.width !== owner.width || paint.height !== owner.height) return document;
-  return update(document, { layers: document.layers.map((layer) => layer.id === paint.id ? { ...paint, type: "mask" as const } : layer.id === owner.id ? { ...owner, rasterMaskId: paint.id } : layer) });
+    || owner.id === paint.id || owner.locked || paint.locked || owner.rasterMaskId
+    || paint.parentId !== owner.parentId || paint.width !== owner.width || paint.height !== owner.height
+    || !sameTransform(paint.transform, owner.transform)) return document;
+  const layers = document.layers.map((layer) => layer.id === paint.id ? { ...paint, type: "mask" as const } : layer.id === owner.id ? { ...owner, rasterMaskId: paint.id } : layer);
+  return updateStructure(document, layers);
 }
 
 export function createAnnotationLayer(document: ImageStudioDocument, name: string): AnnotationLayer {
@@ -70,6 +75,28 @@ export function createAnnotationLayer(document: ImageStudioDocument, name: strin
     id: createId("annotation"), type: "annotation", name, visible: true, locked: false, opacity: 1, blendMode: "normal",
     parentId: null, transform: defaultTransform(), width: document.canvas.width, height: document.canvas.height, elements: [],
   };
+}
+
+/** Keeps existing vector content editable while a new local layer carries a frozen selection mask. */
+export function addSelectionMaskedLocalLayer(
+  document: ImageStudioDocument, sourceId: string, selection: PixelSelectionMask,
+  content: { type: "paint"; name: string; stroke: Stroke; layerId?: string } | { type: "annotation"; name: string; element: AnnotationElement; layerId?: string },
+): ImageStudioDocument {
+  const source = document.layers.find((layer) => layer.id === sourceId);
+  if (!source || !["raster", "paint", "annotation"].includes(source.type) || !layerIsEditable(document.layers, sourceId)
+    || source.width !== selection.width || source.height !== selection.height) return document;
+  const runs = encodeSelectionRuns(selection);
+  const base = content.type === "paint" ? createDrawingLayer(document, "paint", content.name) : createAnnotationLayer(document, content.name);
+  const layer = {
+    ...base, id: content.layerId ?? base.id, parentId: source.parentId, transform: { ...source.transform }, width: source.width, height: source.height,
+    ...(content.type === "paint" ? { strokes: [content.stroke] } : { elements: [content.element] }),
+  } as DrawingLayer | AnnotationLayer;
+  const mask: DrawingLayer = {
+    ...createDrawingLayer(document, "mask", `${content.name} selection`), parentId: source.parentId,
+    transform: { ...source.transform }, width: source.width, height: source.height, opacity: 1, selectionRuns: runs,
+  };
+  layer.rasterMaskId = mask.id;
+  return updateStructure(document, [...document.layers, layer, mask], { layerId: layer.id });
 }
 
 export function createGroupLayer(document: ImageStudioDocument, name: string, parentId: string | null = null): GroupLayer {
@@ -123,13 +150,16 @@ export function deleteLayer(document: ImageStudioDocument, layerId: string): Ima
         removed.add(layer.id);
         changed = true;
       }
+      if (removed.has(layer.id) && layer.rasterMaskId && !removed.has(layer.rasterMaskId)) {
+        removed.add(layer.rasterMaskId);
+        changed = true;
+      }
     }
   }
-  // A v8 general raster mask is an owned companion, not an independently
-  // renderable layer. Removing it must also clear its owner reference so the
-  // next save cannot create an invalid document.
+  // Deleting an owner removes its companion; deleting the mask alone clears the binding.
   const layers = document.layers.filter((layer) => !removed.has(layer.id)).map((layer) => (
-    layer.rasterMaskId && removed.has(layer.rasterMaskId) ? { ...layer, rasterMaskId: undefined } : layer
+    layer.rasterMaskId && removed.has(layer.rasterMaskId)
+      ? { ...layer, rasterMaskId: undefined, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined } : layer
   ));
   const nextSelection = document.selection.layerId && removed.has(document.selection.layerId)
     ? layers[Math.min(index, layers.length - 1)]?.id ?? null
@@ -145,22 +175,25 @@ export function duplicateLayer(document: ImageStudioDocument, layerId: string): 
   // them along with it so the copy keeps its own mask instead of silently inheriting the
   // original's (which would otherwise become the copy's nearest mask post-insertion, leaving
   // the original unmasked).
-  const maskIds = original.type === "adjustment" ? adjacentMaskLayerIds(document.layers, original) : [];
-  const subtree = document.layers.filter((layer) =>
-    layer.id === layerId || maskIds.includes(layer.id) || isDescendant(document.layers, layer.id, layerId));
+  const adjustmentMaskIds = original.type === "adjustment" ? adjacentMaskLayerIds(document.layers, original) : [];
+  const copiedIds = new Set(document.layers.filter((layer) =>
+    layer.id === layerId || adjustmentMaskIds.includes(layer.id) || isDescendant(document.layers, layer.id, layerId)).map((layer) => layer.id));
+  for (const layer of document.layers) if (copiedIds.has(layer.id) && layer.rasterMaskId) copiedIds.add(layer.rasterMaskId);
+  const subtree = document.layers.filter((layer) => copiedIds.has(layer.id));
   const ids = new Map(subtree.map((layer) => [layer.id, createId(layer.type)]));
   const copies = cloneDocument({ ...document, layers: subtree }).layers.map((layer) => {
-    const copy = { ...layer, id: ids.get(layer.id)!, parentId: ids.get(layer.parentId ?? "") ?? layer.parentId ?? null };
+    const copy = { ...layer, id: ids.get(layer.id)!, parentId: ids.get(layer.parentId ?? "") ?? layer.parentId ?? null,
+      rasterMaskId: layer.rasterMaskId ? ids.get(layer.rasterMaskId) : undefined };
     if (layer.id === layerId) {
       copy.name = `${original.name} copy`;
       copy.transform = { ...copy.transform, x: copy.transform.x + 16, y: copy.transform.y + 16 };
     }
     return copy;
   });
-  const lastBundleLayer = maskIds.length ? document.layers.find((layer) => layer.id === maskIds[maskIds.length - 1])! : original;
+  const lastBundleLayer = subtree.reduce((last, layer) => document.layers.indexOf(layer) > document.layers.indexOf(last) ? layer : last, original);
   const layers = [...document.layers];
   layers.splice(document.layers.indexOf(lastBundleLayer) + 1, 0, ...copies);
-  return update(document, { layers, selection: { layerId: ids.get(layerId)! } });
+  return updateStructure(document, layers, { layerId: ids.get(layerId)! });
 }
 
 export function moveLayer(document: ImageStudioDocument, layerId: string, direction: -1 | 1): ImageStudioDocument {
@@ -174,7 +207,7 @@ export function moveLayer(document: ImageStudioDocument, layerId: string, direct
   const nextIndex = document.layers.findIndex((layer) => layer.id === target.id);
   const layers = [...document.layers];
   [layers[index], layers[nextIndex]] = [layers[nextIndex], layers[index]];
-  return update(document, { layers });
+  return updateStructure(document, layers);
 }
 
 export type LayerDropPosition = "before" | "after" | "inside";
@@ -191,7 +224,7 @@ export function reorderLayer(document: ImageStudioDocument, layerId: string, tar
   const targetIndex = layers.findIndex((layer) => layer.id === targetId);
   const parentId = position === "inside" ? target.id : target.parentId ?? null;
   layers.splice(position === "after" ? targetIndex + 1 : targetIndex, 0, { ...source, parentId });
-  return update(document, { layers });
+  return updateStructure(document, layers);
 }
 
 // Dry-runs groupLayers itself so the UI's enabled/disabled state can never drift from what
@@ -214,7 +247,7 @@ export function groupLayers(document: ImageStudioDocument, layerIds: string[], n
   const insertAt = Math.min(...selected.map((layer) => document.layers.findIndex((candidate) => candidate.id === layer.id)));
   const layers = document.layers.map((layer) => unique.includes(layer.id) ? { ...layer, parentId: group.id } : layer);
   layers.splice(insertAt, 0, group);
-  return update(document, { layers, selection: { layerId: group.id } });
+  return updateStructure(document, layers, { layerId: group.id });
 }
 
 export function ungroupLayer(document: ImageStudioDocument, layerId: string): ImageStudioDocument {
@@ -223,14 +256,20 @@ export function ungroupLayer(document: ImageStudioDocument, layerId: string): Im
   if (layer.type !== "group") {
     if (!layer.parentId) return document;
     const parent = document.layers.find((candidate) => candidate.id === layer.parentId);
-    return patchLayer(document, layer.id, { parentId: parent?.parentId ?? null });
+    const layers = document.layers.map((candidate) => candidate.id === layer.id ? { ...candidate, parentId: parent?.parentId ?? null } : candidate);
+    return updateStructure(document, layers);
   }
+  if (layer.rasterMaskId) return document;
   const children = document.layers.filter((candidate) => candidate.parentId === layer.id);
   const childIds = new Set(children.map((child) => child.id));
   const layers = document.layers.filter((candidate) => !childIds.has(candidate.id));
   const index = layers.findIndex((candidate) => candidate.id === layerId);
   layers.splice(index, 1, ...children.map((child) => ({ ...child, parentId: layer.parentId ?? null })));
-  return update(document, { layers, selection: { layerId: children[0]?.id ?? null } });
+  return updateStructure(document, layers, { layerId: children[0]?.id ?? null });
+}
+
+export function canUngroupLayer(document: ImageStudioDocument, layerId: string): boolean {
+  return ungroupLayer(document, layerId) !== document;
 }
 
 export function replaceAdjacentLayers(
@@ -248,7 +287,7 @@ export function replaceAdjacentLayers(
     ...(index === insertAt ? [{ ...merged, parentId: plan.source.parentId ?? null }] : []),
     ...(plan.removedIds.has(layer.id) ? [] : [layer]),
   ]);
-  return update(document, { layers, selection: { layerId: merged.id } });
+  return updateStructure(document, layers, { layerId: merged.id });
 }
 
 export function addStroke(document: ImageStudioDocument, layerId: string, stroke: Stroke): ImageStudioDocument {
@@ -293,6 +332,7 @@ export function replaceRasterLayer(
 ): ImageStudioDocument {
   const layer = document.layers.find((candidate) => candidate.id === layerId);
   if (!layer || layer.type !== "raster" || layer.locked) return document;
+  if (layer.rasterMaskId && (replacement.width !== layer.width || replacement.height !== layer.height)) return document;
   // Most callers replace a layer's own local pixels, so keeping its x/y anchor is correct.
   // A caller compositing a full-canvas, already-absolutely-positioned result (e.g. baking an
   // adjustment) passes resetPosition so that position isn't applied a second time on top.
@@ -319,6 +359,28 @@ export function replaceRasterPixels(
 
 function update(document: ImageStudioDocument, patch: Partial<ImageStudioDocument>): ImageStudioDocument {
   return touchDocument({ ...document, ...patch });
+}
+
+function updateStructure(document: ImageStudioDocument, layers: ImageStudioLayer[], selection = document.selection): ImageStudioDocument {
+  const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  const claimed = new Set(layers.filter((layer) => layer.type === "adjustment")
+    .flatMap((layer) => adjacentMaskLayerIds(layers, layer)));
+  const owned = new Set<string>();
+  for (const layer of layers) {
+    if (!layer.rasterMaskId) continue;
+    if (!["raster", "paint", "annotation", "group"].includes(layer.type)) return document;
+    const mask = byId.get(layer.rasterMaskId);
+    if (!mask || mask.type !== "mask" || (mask.parentId ?? null) !== (layer.parentId ?? null)
+      || mask.width !== layer.width || mask.height !== layer.height
+      || claimed.has(mask.id) || owned.has(mask.id)) return document;
+    owned.add(mask.id);
+  }
+  return update(document, { layers, selection });
+}
+
+function sameTransform(left: LayerTransform, right: LayerTransform): boolean {
+  return left.x === right.x && left.y === right.y && left.scaleX === right.scaleX
+    && left.scaleY === right.scaleY && left.rotation === right.rotation;
 }
 
 function isDescendant(layers: ImageStudioLayer[], candidateId: string, ancestorId: string): boolean {

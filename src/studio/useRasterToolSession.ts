@@ -3,12 +3,13 @@ import type Konva from "konva";
 import type { Locale, MessageKey } from "../i18n";
 import { clampPoint, screenToStage, stageToImage, type Viewport } from "../../../shared/canvas";
 import { layerAncestors } from "../domain/layerHierarchy";
-import { addLayer, addStroke, createAnnotationLayer, replaceLastStroke, replaceRasterPixels } from "../domain/commands";
+import { addLayer, addSelectionMaskedLocalLayer, addStroke, createAnnotationLayer, replaceLastStroke, replaceRasterPixels } from "../domain/commands";
 import {
   createId, rasterSourceUrl, type AnnotationElement, type AnnotationRectElement, type AnnotationTextElement,
   type ImageStudioDocument, type ImageStudioLayer, type Stroke,
 } from "../domain/document";
 import { sampledPixelColor } from "../domain/eyedropper";
+import { encodeSelectionRuns } from "../domain/selectionMaskRuns";
 import {
   BrushStrokeSession, MAX_STROKE_SAMPLES, fallbackSample, pointerSamples, renderBrushDabs,
   type BrushDab, type BrushSettings, type StrokeSample,
@@ -17,9 +18,10 @@ import {
   createArrowElement, createEllipseElement, createLineElement, createPolygonElement, createRectElement, createStarElement, createTextElement,
 } from "../domain/annotation";
 import {
-  clearSelectedPixels, combineSelectionMask, constrainRgbaToSelection, contiguousColorSelectionMask, interpolatedPoints, invertSelectionMask,
+  combineSelectionMask, contiguousColorSelectionMask, interpolatedPoints, invertSelectionMask,
   ellipticalSelectionMask, polygonSelectionMask, rectangularSelectionMask, type PixelSelectionMask, type SelectionOperation,
 } from "../domain/pixelTools";
+import { constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { applyPixelTileDiffs, PixelTileRecorder, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, TOOL_LABELS, type PixelSelection, type MarqueeDraft, type ShapeTool, type Tool } from "./tools";
 
@@ -38,6 +40,7 @@ export interface UseRasterToolSessionOptions {
   commit: (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, mergeKey?: string) => void;
   commitPixel: (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, layerId: string, diffs: readonly PixelTileDiff[]) => void;
   canRecordPixel: (diffs: readonly PixelTileDiff[]) => boolean;
+  canRecordPixelBytes: (bytes: number) => boolean;
   brushSettings: BrushSettings;
   brushSize: number;
   paintColor: string;
@@ -89,7 +92,7 @@ export interface UseRasterToolSessionResult {
  */
 export function useRasterToolSession(options: UseRasterToolSessionOptions): UseRasterToolSessionResult {
   const {
-    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel,
+    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelBytes,
     brushSettings, brushSize, paintColor, changePaintColor, maskValue, magicTolerance, selectionOperation, smudgeStrength, pixelOpacity,
     gradientTransparent, gradientEndColor, shapeTool, textTemplate, shapeTemplate, locale, setError,
     setTool, setInspectorTab, setSelectedElementId, setTextFocusRequest,
@@ -103,6 +106,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
   const [pixelPreviewVersion, refreshPixelPreview] = useState(0);
 
   const activeStrokeRef = useRef<Stroke | null>(null);
+  const activeStrokeLayerIdRef = useRef<string | null>(null);
   const annotationStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeEndRef = useRef<{ x: number; y: number } | null>(null);
@@ -176,24 +180,21 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     if (!selected || selected.locked) return;
     if (!pixelSelection || pixelSelection.layerId !== selected.id || selected.type !== "raster") return;
     const canvas = directPixelCanvasRef.current;
-    const context = canvas?.getContext("2d", { willReadFrequently: true });
-    if (!canvas || !context || canvas.width !== pixelSelection.width || canvas.height !== pixelSelection.height) return;
-    const recorder = new PixelTileRecorder(canvas);
-    const bounds = selectionBounds(pixelSelection);
-    recorder.capture(bounds.x, bounds.y, bounds.width, bounds.height);
-    const image = context.getImageData(0, 0, canvas.width, canvas.height);
-    image.data.set(clearSelectedPixels(image.data, pixelSelection));
-    context.putImageData(image, 0, 0);
-    const diffs = recorder.finish();
-    if (!canRecordPixel(diffs)) { applyPixelTileDiffs(canvas, diffs, "before"); setError("editFailed"); return; }
-    const source = { kind: "data-url" as const, value: canvas.toDataURL("image/png"), mimeType: "image/png" };
-    commitPixel((current) => replaceRasterPixels(current, selected.id, source), "Clear selected pixels", selected.id, diffs);
+    if (!canvas) return;
+    let diffs: PixelTileDiff[] | null = null;
+    try {
+      const coverage = resolveRasterEditCoverage(document, selected, pixelSelection);
+      diffs = eraseSelectedRasterTiles(canvas, pixelSelection, coverage, canRecordPixelBytes, canRecordPixel);
+      if (!diffs.length) { setPixelSelection(null); return; }
+      const source = { kind: "data-url" as const, value: canvas.toDataURL("image/png"), mimeType: "image/png" };
+      commitPixel((current) => replaceRasterPixels(current, selected.id, source), "Clear selected pixels", selected.id, diffs);
+    } catch { if (diffs) applyPixelTileDiffs(canvas, diffs, "before"); refreshPixelPreview((value) => value + 1); setError("editFailed"); return; }
     setPixelSelection(null);
     refreshPixelPreview((value) => value + 1);
-  }, [canRecordPixel, commitPixel, pixelSelection, selected, setError]);
+  }, [canRecordPixel, canRecordPixelBytes, commitPixel, document, pixelSelection, refreshPixelPreview, selected, setError]);
 
   const applyPixelSelection = useCallback((candidate: PixelSelectionMask) => {
-    if (!selected || selected.type !== "raster") return;
+    if (!selected || !["raster", "paint", "annotation"].includes(selected.type)) return;
     setPixelSelection((current) => {
       const previous = current?.layerId === selected.id ? current : null;
       return { layerId: selected.id, ...combineSelectionMask(previous, candidate, selectionOperation) };
@@ -223,6 +224,10 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     return pointer ? clampPoint(screenToStage(pointer, viewport), document.canvas.width, document.canvas.height) : null;
   }, [document.canvas.height, document.canvas.width, stageRef, viewport]);
 
+  const pointerForAnnotation = useCallback(() =>
+    pixelSelection?.layerId === selected?.id ? pointerInSelectedLayer() : pointerInDocument(),
+  [pixelSelection?.layerId, pointerInDocument, pointerInSelectedLayer, selected?.id]);
+
   const brushSamplesInSelectedLayer = useCallback((event: PointerKonvaEvent | undefined, fallback: { x: number; y: number }): StrokeSample[] => {
     if (!selected) return [fallbackSample(fallback, performance.now())];
     return pointerSamples(event?.evt, fallback).map((sample) => {
@@ -251,13 +256,23 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
 
   const addAnnotation = useCallback((element: AnnotationElement) => {
     const styled = colorAnnotation(element);
-    const layer = { ...createAnnotationLayer(document, element.kind === "text" ? TOOL_LABELS[locale].text : TOOL_LABELS[locale].shape), elements: [styled] };
-    commit((current) => addLayer(current, layer), "Add annotation");
+    const name = element.kind === "text" ? TOOL_LABELS[locale].text : TOOL_LABELS[locale].shape;
+    const selection = pixelSelection?.layerId === selected?.id ? pixelSelection : null;
+    try {
+      if (selection && selected) {
+        encodeSelectionRuns(selection);
+        commit((current) => addSelectionMaskedLocalLayer(current, selected.id, selection,
+          { type: "annotation", name, element: styled }), "Add selected annotation");
+      } else {
+        const layer = { ...createAnnotationLayer(document, name), elements: [styled] };
+        commit((current) => addLayer(current, layer), "Add annotation");
+      }
+    } catch { setError("editFailed"); return; }
     setSelectedElementId(element.id);
     setTool("select");
     setInspectorTab("properties");
     if (element.kind === "text") setTextFocusRequest((value) => value + 1);
-  }, [colorAnnotation, commit, document, locale, setInspectorTab, setSelectedElementId, setTextFocusRequest, setTool]);
+  }, [colorAnnotation, commit, document, locale, pixelSelection, selected, setError, setInspectorTab, setSelectedElementId, setTextFocusRequest, setTool]);
 
   const beginPointer = useCallback((event?: PointerKonvaEvent) => {
     const pointer = stageRef.current?.getPointerPosition();
@@ -283,7 +298,8 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     if (tool === "marquee" || tool === "ellipseMarquee" || tool === "lasso" || tool === "polygonLasso" || tool === "magicWand") {
       const canvas = directPixelCanvasRef.current;
       const point = pointerInSelectedLayer();
-      if (!canvas || !point || !selected || selected.type !== "raster" || selected.locked || directPixelLayerIdRef.current !== selected.id) return;
+      if (!point || !selected || !["raster", "paint", "annotation"].includes(selected.type) || selected.locked
+        || (tool === "magicWand" && (selected.type !== "raster" || !canvas || directPixelLayerIdRef.current !== selected.id))) return;
       if (tool === "marquee" || tool === "ellipseMarquee") {
         marqueeStartRef.current = point;
         marqueeEndRef.current = point;
@@ -300,6 +316,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
         } else { lassoPointsRef.current = points; setLassoDraft(points); }
         return;
       }
+      if (!canvas) return;
       try {
         const pixels = canvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, canvas.width, canvas.height).data;
         if (pixels) applyPixelSelection(contiguousColorSelectionMask(pixels, canvas.width, canvas.height, point, magicTolerance));
@@ -346,7 +363,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       return;
     }
     if (tool === "text") {
-      const point = pointerInDocument(); if (!point) return;
+      const point = pointerForAnnotation(); if (!point) return;
       const element = createTextElement(point);
       if (element.kind === "text") {
         const draft = colorAnnotation({ ...element, text: TOOL_LABELS[locale].text });
@@ -356,7 +373,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       return;
     }
     if (tool === "shape") {
-      const point = pointerInDocument(); if (!point) return;
+      const point = pointerForAnnotation(); if (!point) return;
       annotationStartRef.current = point;
       return;
     }
@@ -370,11 +387,23 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       brush: { ...brushSettings, seed: (Date.now() ^ Math.round(point.x * 65_537) ^ Math.round(point.y * 257)) >>> 0 },
       size: brushSize, mode: tool === "eraser" ? "erase" : "paint", value: maskValue, color: paintColor,
     };
-    activeStrokeRef.current = stroke;
-    commit((current) => addStroke(current, selected.id, stroke), "Draw stroke", `stroke:${stroke.id}`);
+    try {
+      const selection = pixelSelection?.layerId === selected.id ? pixelSelection : null;
+      if (selection && selected.type === "paint") {
+        encodeSelectionRuns(selection);
+        const layerId = createId("paint");
+        commit((current) => addSelectionMaskedLocalLayer(current, selected.id, selection,
+          { type: "paint", name: selected.name, stroke, layerId }), "Draw selected stroke", `stroke:${stroke.id}`);
+        activeStrokeLayerIdRef.current = layerId;
+      } else {
+        commit((current) => addStroke(current, selected.id, stroke), "Draw stroke", `stroke:${stroke.id}`);
+        activeStrokeLayerIdRef.current = selected.id;
+      }
+      activeStrokeRef.current = stroke;
+    } catch { setError("editFailed"); }
   }, [
     applyPixelSelection, brushSamplesInSelectedLayer, brushSettings, brushSize, changePaintColor, colorAnnotation, commit, locale, magicTolerance, maskValue,
-    paintColor, pointerInDocument, pointerInSelectedLayer, schedulePixelPreview, selected, selectedEditable, setError, stageRef, tool,
+    paintColor, pixelSelection, pointerForAnnotation, pointerInSelectedLayer, schedulePixelPreview, selected, selectedEditable, setError, stageRef, tool,
   ]);
 
   const movePointer = useCallback((event?: PointerKonvaEvent) => {
@@ -390,7 +419,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       return;
     }
     if (annotationStartRef.current && tool === "shape") {
-      const point = pointerInDocument(); if (!point) return;
+      const point = pointerForAnnotation(); if (!point) return;
       const shape = annotationForDrag(annotationStartRef.current, point);
       const draft = shape ? colorAnnotation(shape) : null;
       draftAnnotationRef.current = draft;
@@ -443,23 +472,24 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       samples: [...(stroke.samples ?? []), ...samples].slice(0, MAX_STROKE_SAMPLES),
     };
     activeStrokeRef.current = nextStroke;
-    commit((current) => replaceLastStroke(current, selected.id, nextStroke), "Draw stroke", `stroke:${stroke.id}`);
+    const layerId = activeStrokeLayerIdRef.current;
+    if (layerId) commit((current) => replaceLastStroke(current, layerId, nextStroke), "Draw stroke", `stroke:${stroke.id}`);
   }, [
     annotationForDrag, brushSamplesInSelectedLayer, brushSize, colorAnnotation, commit, gradientEndColor, gradientTransparent,
-    paintColor, pixelOpacity, pointerInDocument, pointerInSelectedLayer, schedulePixelPreview, selected, setViewport, smudgeStrength, stageRef, tool,
+    paintColor, pixelOpacity, pointerForAnnotation, pointerInSelectedLayer, schedulePixelPreview, selected, setViewport, smudgeStrength, stageRef, tool,
   ]);
 
   const endPointer = useCallback((event?: PointerKonvaEvent) => {
     if (typeof PointerEvent !== "undefined" && event?.evt instanceof PointerEvent && activePointerIdRef.current !== null
       && event.evt.pointerId !== activePointerIdRef.current) return;
     if (draftAnnotationRef.current && event?.evt.type !== "pointercancel") addAnnotation(draftAnnotationRef.current);
-    if (marqueeStartRef.current && marqueeEndRef.current && selected?.type === "raster") {
+    if (marqueeStartRef.current && marqueeEndRef.current && selected && ["raster", "paint", "annotation"].includes(selected.type)) {
       const mask = tool === "ellipseMarquee"
         ? ellipticalSelectionMask(selected.width, selected.height, marqueeStartRef.current, marqueeEndRef.current)
         : rectangularSelectionMask(selected.width, selected.height, marqueeStartRef.current, marqueeEndRef.current);
       applyPixelSelection(mask);
     }
-    if (tool === "lasso" && selected?.type === "raster" && lassoPointsRef.current.length >= 3 && event?.evt.type !== "pointercancel") {
+    if (tool === "lasso" && selected && ["raster", "paint", "annotation"].includes(selected.type) && lassoPointsRef.current.length >= 3 && event?.evt.type !== "pointercancel") {
       applyPixelSelection(polygonSelectionMask(selected.width, selected.height, lassoPointsRef.current));
     }
     const pixelCanvas = directPixelCanvasRef.current;
@@ -474,16 +504,23 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       const layer = document.layers.find((candidate) => candidate.id === pixelLayerId);
       let diffs = pixelTileRecorderRef.current?.finish() ?? [];
       const selection = pixelSelection?.layerId === pixelLayerId ? pixelSelection : null;
-      if (selection && diffs.length) {
-        const context = pixelCanvas.getContext("2d", { willReadFrequently: true });
-        if (!context) throw new Error("Pixel history canvas is unavailable");
-        diffs = diffs.flatMap((diff) => {
-          const after = constrainRgbaToSelection(diff.before, diff.after, selection, diff.x, diff.y, diff.width, diff.height);
-          const image = context.createImageData(diff.width, diff.height);
-          image.data.set(after);
-          context.putImageData(image, diff.x, diff.y);
-          return after.some((value, index) => value !== diff.before[index]) ? [{ ...diff, after }] : [];
-        });
+      if (layer?.type === "raster" && diffs.length && (selection || layer.rasterMaskId)) {
+        try {
+          const context = pixelCanvas.getContext("2d", { willReadFrequently: true });
+          if (!context) throw new Error("Pixel history canvas is unavailable");
+          const coverage = resolveRasterEditCoverage(document, layer, selection);
+          if (coverage) diffs = diffs.flatMap((diff) => {
+            const after = constrainRgbaToCoverage(diff.before, diff.after, coverage, layer.width, layer.height, diff.x, diff.y, diff.width, diff.height);
+            const image = context.createImageData(diff.width, diff.height);
+            image.data.set(after);
+            context.putImageData(image, diff.x, diff.y);
+            return after.some((value, index) => value !== diff.before[index]) ? [{ ...diff, after }] : [];
+          });
+        } catch {
+          applyPixelTileDiffs(pixelCanvas, diffs, "before");
+          diffs = [];
+          setError("editFailed");
+        }
       }
       if (cancelled) {
         applyPixelTileDiffs(pixelCanvas, diffs, "before");
@@ -492,15 +529,21 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
           applyPixelTileDiffs(pixelCanvas, diffs, "before");
           setError("editFailed");
         } else {
-        const mimeType = tool === "eraser" ? "image/png" : (["image/png", "image/jpeg", "image/webp"].includes(layer.source.mimeType) ? layer.source.mimeType : "image/png");
-        const value = pixelCanvas.toDataURL(mimeType);
-          commitPixel((current) => replaceRasterPixels(current, pixelLayerId, { kind: "data-url", value, mimeType }), "Apply direct pixel edit", pixelLayerId, diffs);
+          try {
+            const mimeType = editedRasterMimeType(layer.source.mimeType, Boolean(selection || layer.rasterMaskId), tool === "eraser");
+            const value = pixelCanvas.toDataURL(mimeType);
+            commitPixel((current) => replaceRasterPixels(current, pixelLayerId, { kind: "data-url", value, mimeType }), "Apply direct pixel edit", pixelLayerId, diffs);
+          } catch {
+            applyPixelTileDiffs(pixelCanvas, diffs, "before");
+            setError("editFailed");
+          }
         }
       }
     }
     pixelBrushRef.current = null;
     activePointerIdRef.current = null;
     activeStrokeRef.current = null; panRef.current = null; annotationStartRef.current = null; marqueeStartRef.current = null; marqueeEndRef.current = null;
+    activeStrokeLayerIdRef.current = null;
     if (tool !== "polygonLasso") { lassoPointsRef.current = []; setLassoDraft(null); }
     draftAnnotationRef.current = null; setDraftAnnotation(null);
     setMarqueeDraft(null);
@@ -559,16 +602,6 @@ function captureDabRegion(recorder: PixelTileRecorder | null, dabs: readonly Bru
 
 function captureSegment(recorder: PixelTileRecorder | null, start: { x: number; y: number }, end: { x: number; y: number }, radius: number): void {
   recorder?.capture(Math.min(start.x, end.x) - radius, Math.min(start.y, end.y) - radius, Math.abs(start.x - end.x) + radius * 2, Math.abs(start.y - end.y) + radius * 2);
-}
-
-function selectionBounds(selection: PixelSelection): { x: number; y: number; width: number; height: number } {
-  let left = selection.width, top = selection.height, right = -1, bottom = -1;
-  for (let index = 0; index < selection.pixels.length; index += 1) {
-    if (!selection.pixels[index]) continue;
-    const x = index % selection.width, y = Math.floor(index / selection.width);
-    left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x); bottom = Math.max(bottom, y);
-  }
-  return right < left ? { x: 0, y: 0, width: 0, height: 0 } : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
 }
 
 async function rasterCanvas(layer: Extract<ImageStudioLayer, { type: "raster" }>): Promise<HTMLCanvasElement> {
