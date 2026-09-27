@@ -61,6 +61,9 @@ export interface DrawingLayer extends LayerBase {
   strokes: Stroke[];
   /** v10 compact row-major binary base for a selection-derived local mask. */
   selectionRuns?: number[];
+  /** v11 effects for a position-derived adjustment mask, independent of an owned raster mask. */
+  adjustmentMaskInverted?: boolean;
+  adjustmentMaskFeatherPx?: number;
 }
 
 export interface AnnotationTextElement {

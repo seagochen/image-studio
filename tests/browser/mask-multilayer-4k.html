@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio 4K adjacent-mask memory smoke test</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { createDrawingLayer } from "../../src/domain/commands.ts";
+  import { createAdjustmentLayer } from "../../src/domain/adjustmentEngine.ts";
+  import { createEmptyDocument } from "../../src/domain/document.ts";
+  import { renderCombinedAdjustmentMask } from "../../src/domain/exportImage.ts";
+
+  const result = document.getElementById("result");
+  const size = 4096;
+  const empty = { ...createEmptyDocument(), canvas: { width: size, height: size } };
+  const adjustment = createAdjustmentLayer(empty, "invert", "4K masked invert");
+  const masks = Array.from({ length: 3 }, (_, index) => ({
+    ...createDrawingLayer(empty, "mask", `Mask ${index + 1}`),
+    opacity: 0.5, selectionRuns: [0, size * size],
+  }));
+  const canvases = [];
+  let peakLiveCanvases = 0;
+  const createCanvas = (width, height) => {
+    const canvas = Object.assign(document.createElement("canvas"), { width, height });
+    canvases.push(canvas);
+    peakLiveCanvases = Math.max(peakLiveCanvases, canvases.filter((item) => item.width > 1 && item.height > 1).length);
+    return canvas;
+  };
+  try {
+    const started = performance.now();
+    const canvas = await renderCombinedAdjustmentMask({ ...empty, layers: [adjustment, ...masks] }, masks.map((mask) => mask.id), createCanvas, 1);
+    if (!canvas) throw new Error("Expected a 4K combined adjustment mask");
+    const elapsedMs = Math.round(performance.now() - started);
+    const center = [...canvas.getContext("2d").getImageData(size / 2, size / 2, 1, 1).data];
+    if (peakLiveCanvases > 2 || center.slice(0, 3).some((channel) => channel !== 32) || center[3] !== 255) {
+      throw new Error(`Unexpected 4K adjacent-mask result: ${JSON.stringify({ peakLiveCanvases, center })}`);
+    }
+    canvas.width = 1; canvas.height = 1;
+    const small = { ...createEmptyDocument(), canvas: { width: 512, height: 512 } };
+    const smallMasks = Array.from({ length: 2 }, (_, index) => ({
+      ...createDrawingLayer(small, "mask", `Abort mask ${index + 1}`), selectionRuns: [0, 512 * 512],
+    }));
+    const beforeAbort = canvases.length;
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 0);
+    let cancelled = false;
+    try {
+      await renderCombinedAdjustmentMask({ ...small, layers: smallMasks }, smallMasks.map((mask) => mask.id), createCanvas, 1, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      cancelled = true;
+    }
+    if (!cancelled || canvases.slice(beforeAbort).some((item) => item.width > 1 || item.height > 1)) {
+      throw new Error("Cancelled mask composition retained a full-size canvas");
+    }
+    result.textContent = JSON.stringify({ status: "passed", size, masks: masks.length, peakLiveCanvases,
+      weightBytes: size * size * 4, elapsedMs, center });
+    document.documentElement.dataset.result = "passed";
+  } catch (error) {
+    result.textContent = JSON.stringify({ status: "failed", message: String(error) });
+    document.documentElement.dataset.result = "failed";
+  }
+</script>
+</html>

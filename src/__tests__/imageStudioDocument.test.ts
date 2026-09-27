@@ -16,7 +16,7 @@ describe("ImageStudioDocument", () => {
   });
 
   it("rejects future versions and invalid canvases", () => {
-    expect(() => parseDocument('{"version":11}')).toThrow("Unsupported");
+    expect(() => parseDocument('{"version":12}')).toThrow("Unsupported");
     expect(() => parseDocument('{"version":5,"canvas":{"width":0,"height":1},"layers":[],"selection":{},"metadata":{}}')).toThrow("canvas");
   });
 
@@ -25,7 +25,7 @@ describe("ImageStudioDocument", () => {
     const legacyPaint = { ...paint, blendMode: undefined, strokes: [{ id: "s1", points: [{ x: 1, y: 1 }], size: 4, mode: "paint", value: 255 }] };
     const legacy = { ...createEmptyDocument(), version: 2, layers: [legacyPaint], selection: { layerId: paint.id } };
     const migrated = parseDocument(JSON.stringify(legacy));
-    expect(migrated.version).toBe(10);
+    expect(migrated.version).toBe(11);
     expect(migrated.layers[0]).toMatchObject({ blendMode: "normal", strokes: [{ color: "#111827" }] });
     expect(migrated.layers[0].type === "paint" && migrated.layers[0].strokes[0].brush).toBeUndefined();
   });
@@ -34,7 +34,7 @@ describe("ImageStudioDocument", () => {
     const paint = createDrawingLayer(createEmptyDocument(), "paint", "Paint");
     const v3 = { ...createEmptyDocument(), version: 3, layers: [{ ...paint, blendMode: "multiply" }], selection: { layerId: paint.id } };
     const migrated = parseDocument(JSON.stringify(v3));
-    expect(migrated.version).toBe(10);
+    expect(migrated.version).toBe(11);
     expect(migrated.layers[0]).toMatchObject({ blendMode: "multiply" });
   });
 

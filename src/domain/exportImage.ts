@@ -144,41 +144,43 @@ async function renderLayerStack(
     if (layer.type === "adjustment") {
       const width = Math.max(1, Math.ceil(document.canvas.width * scale));
       const height = Math.max(1, Math.ceil(document.canvas.height * scale));
-      const mask = renderCombinedAdjustmentMask(document, adjacentMaskLayerIds(document.layers, layer), createCanvas, scale);
-      if (isSpatialAdjustment(layer.adjustment.kind)) {
-        const adjustment = scaledSpatialAdjustment(layer.adjustment, scale);
-        const halo = spatialRadius(adjustment);
-        const rows = Math.max(24, Math.floor(ADJUSTMENT_CHUNK_PIXELS / width));
-        const maskContext = mask?.getContext("2d");
-        const source = createCanvas(document.canvas.width, document.canvas.height);
-        const sourceContext = source.getContext("2d");
-        if (!sourceContext) throw new Error("Canvas export is unavailable");
-        sourceContext.drawImage(context.canvas, 0, 0);
-        try {
-          for (let y = 0; y < height; y += rows) {
-            await yieldRenderTask(signal);
-            const chunkHeight = Math.min(rows, height - y);
-            const readY = Math.max(0, y - halo);
-            const readEnd = Math.min(height, y + chunkHeight + halo);
-            const image = sourceContext.getImageData(0, readY, width, readEnd - readY);
-            const maskData = maskContext?.getImageData(0, readY, width, readEnd - readY).data;
-            image.data.set(applySpatialAdjustment(image.data, width, image.height, adjustment, layer.opacity, maskData, layer.blendMode));
-            context.putImageData(image, 0, readY, 0, y - readY, width, chunkHeight);
-          }
-        } finally { source.width = 1; source.height = 1; }
+      const mask = await renderCombinedAdjustmentMask(document, adjacentMaskLayerIds(document.layers, layer), createCanvas, scale, signal);
+      try {
+        if (isSpatialAdjustment(layer.adjustment.kind)) {
+          const adjustment = scaledSpatialAdjustment(layer.adjustment, scale);
+          const halo = spatialRadius(adjustment);
+          const rows = Math.max(24, Math.floor(ADJUSTMENT_CHUNK_PIXELS / width));
+          const maskContext = mask?.getContext("2d");
+          const source = createCanvas(document.canvas.width, document.canvas.height);
+          const sourceContext = source.getContext("2d");
+          if (!sourceContext) throw new Error("Canvas export is unavailable");
+          sourceContext.drawImage(context.canvas, 0, 0);
+          try {
+            for (let y = 0; y < height; y += rows) {
+              await yieldRenderTask(signal);
+              const chunkHeight = Math.min(rows, height - y);
+              const readY = Math.max(0, y - halo);
+              const readEnd = Math.min(height, y + chunkHeight + halo);
+              const image = sourceContext.getImageData(0, readY, width, readEnd - readY);
+              const maskData = maskContext?.getImageData(0, readY, width, readEnd - readY).data;
+              image.data.set(applySpatialAdjustment(image.data, width, image.height, adjustment, layer.opacity, maskData, layer.blendMode));
+              context.putImageData(image, 0, readY, 0, y - readY, width, chunkHeight);
+            }
+          } finally { source.width = 1; source.height = 1; }
+          continue;
+        }
+        const kernel = adjustmentKernel(layer.adjustment, layer.opacity, layer.blendMode);
+        const rows = Math.max(1, Math.floor(ADJUSTMENT_CHUNK_PIXELS / width));
+        for (let y = 0; y < height; y += rows) {
+          await yieldRenderTask(signal);
+          const chunkHeight = Math.min(rows, height - y);
+          const image = context.getImageData(0, y, width, chunkHeight);
+          kernel(image.data, mask?.getContext("2d")?.getImageData(0, y, width, chunkHeight).data);
+          context.putImageData(image, 0, y);
+        }
+      } finally {
         if (mask) { mask.width = 1; mask.height = 1; }
-        continue;
       }
-      const kernel = adjustmentKernel(layer.adjustment, layer.opacity, layer.blendMode);
-      const rows = Math.max(1, Math.floor(ADJUSTMENT_CHUNK_PIXELS / width));
-      for (let y = 0; y < height; y += rows) {
-        await yieldRenderTask(signal);
-        const chunkHeight = Math.min(rows, height - y);
-        const image = context.getImageData(0, y, width, chunkHeight);
-        kernel(image.data, mask?.getContext("2d")?.getImageData(0, y, width, chunkHeight).data);
-        context.putImageData(image, 0, y);
-      }
-      if (mask) { mask.width = 1; mask.height = 1; }
       continue;
     }
     if (layer.type === "group") {
@@ -310,15 +312,32 @@ function renderAdjustmentMask(
   const layer = document.layers.find((candidate) => candidate.id === layerId);
   if (!layer || layer.type !== "mask") return undefined;
   const canvas = createCanvas(document.canvas.width, document.canvas.height);
-  const context = canvas.getContext("2d");
-  if (!context) return undefined;
-  context.scale(scale, scale);
-  context.save(); applyLayerComposition(context, layer);
-  const drawing = renderDrawingLayer(layer, createCanvas, scale);
-  context.drawImage(drawing, 0, 0, layer.width, layer.height);
-  drawing.width = 1; drawing.height = 1;
-  context.restore();
-  return canvas;
+  let drawing: HTMLCanvasElement | undefined;
+  try {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Adjustment mask canvas is unavailable");
+    context.scale(scale, scale);
+    context.save();
+    try {
+      applyLayerComposition(context, layer);
+      const hasEffects = layer.adjustmentMaskInverted === true || (layer.adjustmentMaskFeatherPx ?? 0) > 0;
+      drawing = hasEffects ? createCanvas(layer.width, layer.height) : renderDrawingLayer(layer, createCanvas, scale);
+      if (hasEffects) {
+        const drawingContext = drawing.getContext("2d");
+        if (!drawingContext) throw new Error("Adjustment mask canvas is unavailable");
+        drawingContext.fillStyle = "#fff";
+        drawingContext.fillRect(0, 0, drawing.width, drawing.height);
+        applyRasterMask(drawing, layer, createCanvas, scale, layer.adjustmentMaskInverted, layer.adjustmentMaskFeatherPx);
+      }
+      context.drawImage(drawing, 0, 0, layer.width, layer.height);
+    } finally { context.restore(); }
+    return canvas;
+  } catch (error) {
+    canvas.width = 1; canvas.height = 1;
+    throw error;
+  } finally {
+    if (drawing) { drawing.width = 1; drawing.height = 1; }
+  }
 }
 
 /**
@@ -339,32 +358,73 @@ export function combineMaskData(datas: Uint8ClampedArray[]): Uint8ClampedArray {
   return combined;
 }
 
-/** Combines every mask an adjustment layer claims (Issue #171: consecutive mask siblings
- * directly above it) into one equivalent mask canvas via combineMaskData. */
-function renderCombinedAdjustmentMask(
+/** Combines adjacent masks with one source canvas and bounded row buffers at a time.
+ * The weight buffer is independent of mask count; rounding happens only after all masks. */
+export async function renderCombinedAdjustmentMask(
   document: ImageStudioDocument,
   maskLayerIds: string[],
-  createCanvas: (width: number, height: number) => HTMLCanvasElement, scale: number,
-): HTMLCanvasElement | undefined {
-  const canvases = maskLayerIds
-    .map((id) => renderAdjustmentMask(document, id, createCanvas, scale))
-    .filter((canvas): canvas is HTMLCanvasElement => Boolean(canvas));
-  if (!canvases.length) return undefined;
-  if (canvases.length === 1) return canvases[0];
-  const combined = createCanvas(document.canvas.width, document.canvas.height);
-  const combinedContext = combined.getContext("2d");
-  if (!combinedContext) return undefined;
-  const { width, height } = combined;
-  const datas: Uint8ClampedArray[] = [];
-  for (const canvas of canvases) {
-    const data = canvas.getContext("2d")?.getImageData(0, 0, width, height).data;
-    if (data) datas.push(data as Uint8ClampedArray);
+  createCanvas: (width: number, height: number) => HTMLCanvasElement, scale: number, signal?: AbortSignal,
+): Promise<HTMLCanvasElement | undefined> {
+  if (!maskLayerIds.length) return undefined;
+  if (maskLayerIds.length === 1) {
+    signal?.throwIfAborted();
+    return renderAdjustmentMask(document, maskLayerIds[0], createCanvas, scale);
   }
-  const combinedImage = combinedContext.createImageData(width, height);
-  combinedImage.data.set(combineMaskData(datas));
-  combinedContext.putImageData(combinedImage, 0, 0);
-  for (const canvas of canvases) { canvas.width = 1; canvas.height = 1; }
-  return combined;
+  let weights: Float32Array | undefined;
+  let width = 0;
+  let height = 0;
+  let combined: HTMLCanvasElement | undefined;
+  try {
+    for (const id of maskLayerIds) {
+      signal?.throwIfAborted();
+      const canvas = renderAdjustmentMask(document, id, createCanvas, scale);
+      if (!canvas) continue;
+      try {
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) throw new Error("Adjustment mask canvas is unavailable");
+        if (!weights) {
+          width = canvas.width; height = canvas.height;
+          weights = new Float32Array(width * height).fill(1);
+        } else if (canvas.width !== width || canvas.height !== height) {
+          throw new Error("Adjustment mask dimensions do not match");
+        }
+        const rows = Math.max(1, Math.floor(ADJUSTMENT_CHUNK_PIXELS * 16 / width));
+        for (let y = 0; y < height; y += rows) {
+          await yieldRenderTask(signal);
+          const chunkHeight = Math.min(rows, height - y);
+          const data = context.getImageData(0, y, width, chunkHeight).data;
+          for (let pixel = 0; pixel < width * chunkHeight; pixel += 1) {
+            const index = pixel * 4;
+            weights[y * width + pixel] *= data[index + 3] / 255
+              * (data[index] + data[index + 1] + data[index + 2]) / 765;
+          }
+        }
+      } finally { canvas.width = 1; canvas.height = 1; }
+    }
+    if (!weights) return undefined;
+    combined = createCanvas(document.canvas.width, document.canvas.height);
+    const context = combined.getContext("2d");
+    if (!context || combined.width !== width || combined.height !== height) {
+      throw new Error("Adjustment mask canvas is unavailable");
+    }
+    const rows = Math.max(1, Math.floor(ADJUSTMENT_CHUNK_PIXELS * 16 / width));
+    for (let y = 0; y < height; y += rows) {
+      await yieldRenderTask(signal);
+      const chunkHeight = Math.min(rows, height - y);
+      const image = context.createImageData(width, chunkHeight);
+      for (let pixel = 0; pixel < width * chunkHeight; pixel += 1) {
+        const value = Math.round(Math.max(0, Math.min(1, weights[y * width + pixel])) * 255);
+        const index = pixel * 4;
+        image.data[index] = value; image.data[index + 1] = value;
+        image.data[index + 2] = value; image.data[index + 3] = 255;
+      }
+      context.putImageData(image, 0, y);
+    }
+    return combined;
+  } catch (error) {
+    if (combined) { combined.width = 1; combined.height = 1; }
+    throw error;
+  }
 }
 
 export function exportFilename(title: string, format: ExportFormat): string {

@@ -77,6 +77,32 @@ describe("Image Studio selection-derived local masks", () => {
     expect((await history.redo(document)).layers).toEqual(next.layers);
   });
 
+  it("intersects a selected adjustment with an independent copy of the source mask", () => {
+    const initial = { ...createEmptyDocument(), canvas: { width: 2, height: 1 } };
+    const mask = { ...createDrawingLayer(initial, "mask", "Original mask"), selectionRuns: [0, 1, 1], opacity: 0.4, visible: false };
+    const source = { ...createDrawingLayer(initial, "paint", "Source"), rasterMaskId: mask.id,
+      transform: { x: 7, y: 4, scaleX: 1, scaleY: 1, rotation: 0 } };
+    const document = addLayer(addLayer(initial, source), mask);
+    const adjustment = createAdjustmentLayer(document, "exposure", "Selected exposure");
+    const selection = { width: 2, height: 1, pixels: new Uint8Array([1, 1]) };
+    const next = addSelectionMaskedAdjustmentLayer(document, source.id, selection, adjustment);
+    expect(next.layers).toHaveLength(5);
+    expect(next.layers[1]).toEqual(mask);
+    expect(adjacentMaskLayerIds(next.layers, adjustment)).toEqual([next.layers[3].id, next.layers[4].id]);
+    expect(next.layers[4]).toMatchObject({ type: "mask", selectionRuns: [0, 1, 1], transform: source.transform, opacity: 1, visible: true });
+    expect(next.layers[4].id).not.toBe(mask.id);
+    expect(parseDocument(serializeDocument(next)).layers).toHaveLength(5);
+    expect(duplicateLayer(next, adjustment.id).layers.filter((layer) => layer.type === "mask")).toHaveLength(5);
+    const inverted = { ...document, layers: [{ ...source, rasterMaskInverted: true }, mask] };
+    const feathered = { ...document, layers: [{ ...source, rasterMaskFeatherPx: 4 }, mask] };
+    const invertedAdjustment = addSelectionMaskedAdjustmentLayer(inverted, source.id, selection, adjustment);
+    const featheredAdjustment = addSelectionMaskedAdjustmentLayer(feathered, source.id, selection, adjustment);
+    expect(invertedAdjustment.layers[4]).toMatchObject({ adjustmentMaskInverted: true });
+    expect(featheredAdjustment.layers[4]).toMatchObject({ adjustmentMaskFeatherPx: 4 });
+    expect(parseDocument(serializeDocument(invertedAdjustment)).layers[4]).toMatchObject({ adjustmentMaskInverted: true });
+    expect(parseDocument(serializeDocument(featheredAdjustment)).layers[4]).toMatchObject({ adjustmentMaskFeatherPx: 4 });
+  });
+
   it("rejects a selected adjustment when its source mask or dimensions cannot be preserved", () => {
     const initial = { ...createEmptyDocument(), canvas: { width: 2, height: 1 } };
     const source = createDrawingLayer(initial, "paint", "Source");

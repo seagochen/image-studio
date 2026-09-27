@@ -39,9 +39,12 @@ export function AdjustmentEditorDialog({ document: baseDocument, draft, sourceLa
     return () => previous?.focus();
   }, []);
 
-  const previewDocument = useMemo(() => selection && sourceLayerId
-    ? addSelectionMaskedAdjustmentLayer(baseDocument, sourceLayerId, selection, layer)
-    : addLayer(baseDocument, layer), [baseDocument, layer, selection, sourceLayerId]);
+  const scopedPreviewBase = useMemo(() => selection && sourceLayerId
+    ? addSelectionMaskedAdjustmentLayer(baseDocument, sourceLayerId, selection, draft)
+    : null, [baseDocument, draft, selection, sourceLayerId]);
+  const previewDocument = useMemo(() => scopedPreviewBase
+    ? { ...scopedPreviewBase, layers: scopedPreviewBase.layers.map((candidate) => candidate.id === layer.id ? layer : candidate) }
+    : addLayer(baseDocument, layer), [baseDocument, layer, scopedPreviewBase]);
   const previewCanvas = useCompositePreview(previewDocument, true, 0, undefined, false, () => setPreviewFailed(true));
 
   useEffect(() => {

@@ -41,7 +41,6 @@ import { PixelTileArchive } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
 import { resolveRasterEditCoverage } from "../domain/editCoverage";
 import { bindConfiguredShortcuts, loadShortcuts, SHORTCUT_ACTIONS, type ShortcutAction } from "../domain/shortcutSettings";
-import { encodeSelectionRuns } from "../domain/selectionMaskRuns";
 import { FileMenu, type DeliveryFormat } from "./FileMenu";
 import { clearPreviewTileCache, previewStorageStatus } from "./previewTiles";
 import { ShortcutSettingsDialog } from "./ShortcutSettingsDialog";
@@ -225,15 +224,15 @@ export function Studio(): JSX.Element {
     const sourceLayerId = snapshot.selection.layerId;
     const source = snapshot.layers.find((layer) => layer.id === sourceLayerId);
     const selection = pixelSelection?.layerId === sourceLayerId ? pixelSelection : null;
-    if (selection && (!source || source.rasterMaskId || !layerIsEditable(snapshot.layers, source.id))) {
-      setError("editFailed"); return;
-    }
     const label = ADJUSTMENT_KIND_LABELS[locale][kind];
-    if (selection) {
-      try { encodeSelectionRuns(selection); }
-      catch { setError("editFailed"); return; }
-    }
     const layer = createAdjustmentLayer(snapshot, kind, label, source?.parentId ?? null);
+    if (selection) {
+      try {
+        if (!sourceLayerId || addSelectionMaskedAdjustmentLayer(snapshot, sourceLayerId, selection, layer) === snapshot) {
+          setError("editFailed"); return;
+        }
+      } catch { setError("editFailed"); return; }
+    }
     setAdjustmentDraft({ layer, sourceLayerId, selection });
   }, [locale, pixelSelection]);
 

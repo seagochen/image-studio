@@ -105,14 +105,25 @@ export function addSelectionMaskedAdjustmentLayer(
 ): ImageStudioDocument {
   const source = document.layers.find((layer) => layer.id === sourceId);
   if (!source || !["raster", "paint", "annotation"].includes(source.type) || !layerIsEditable(document.layers, sourceId)
-    || source.rasterMaskId || adjustment.type !== "adjustment" || (adjustment.parentId ?? null) !== (source.parentId ?? null)
+    || adjustment.type !== "adjustment" || (adjustment.parentId ?? null) !== (source.parentId ?? null)
     || source.width !== selection.width || source.height !== selection.height) return document;
+  const sourceMask = source.rasterMaskId ? document.layers.find((layer) => layer.id === source.rasterMaskId) : null;
+  if (source.rasterMaskId && (!sourceMask || sourceMask.type !== "mask"
+    || (sourceMask.parentId ?? null) !== (source.parentId ?? null)
+    || sourceMask.width !== source.width || sourceMask.height !== source.height)) return document;
   const runs = encodeSelectionRuns(selection);
   const mask: DrawingLayer = {
     ...createDrawingLayer(document, "mask", `${adjustment.name} selection`), parentId: source.parentId,
     transform: { ...source.transform }, width: source.width, height: source.height, opacity: 1, selectionRuns: runs,
   };
-  return updateStructure(document, [...document.layers, adjustment, mask], { layerId: adjustment.id });
+  const copiedMask: DrawingLayer | null = sourceMask?.type === "mask" ? {
+    ...structuredClone(sourceMask), id: createId("mask"), name: `${adjustment.name} source mask`,
+    parentId: source.parentId, transform: { ...source.transform }, opacity: 1, blendMode: "normal",
+    visible: true, locked: false, adjustmentMaskInverted: source.rasterMaskInverted,
+    adjustmentMaskFeatherPx: source.rasterMaskFeatherPx,
+  } : null;
+  return updateStructure(document, [...document.layers, adjustment, mask, ...(copiedMask ? [copiedMask] : [])],
+    { layerId: adjustment.id });
 }
 
 export function createGroupLayer(document: ImageStudioDocument, name: string, parentId: string | null = null): GroupLayer {

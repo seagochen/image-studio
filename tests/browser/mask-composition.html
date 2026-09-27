@@ -4,9 +4,11 @@
 <title>Image Studio owned-mask composition smoke test</title>
 <pre id="result">running</pre>
 <script type="module">
-  import { addLayer, addSelectionMaskedLocalLayer, createAnnotationLayer, createDrawingLayer, createGroupLayer } from "../../src/domain/commands.ts";
+  import { addLayer, addSelectionMaskedAdjustmentLayer, addSelectionMaskedLocalLayer, createAnnotationLayer, createDrawingLayer, createGroupLayer } from "../../src/domain/commands.ts";
   import { createEmptyDocument, parseDocument, serializeDocument } from "../../src/domain/document.ts";
   import { renderImageStudioDocument } from "../../src/domain/exportImage.ts";
+  import { createAdjustmentLayer } from "../../src/domain/adjustmentEngine.ts";
+  import { rectangularSelectionMask } from "../../src/domain/pixelTools.ts";
 
   const result = document.getElementById("result");
   const empty = { ...createEmptyDocument(), canvas: { width: 64, height: 64 } };
@@ -83,7 +85,7 @@
     const localContext = localCanvas.getContext("2d");
     const localCenter = [...localContext.getImageData(32, 32, 1, 1).data];
     const localOutside = [...localContext.getImageData(4, 4, 1, 1).data];
-    if (localReopened.version !== 10 || localReopened.layers.length !== 3 || localCenter[0] !== 255 || localCenter[3] !== 255 || localOutside[3] !== 0) {
+    if (localReopened.version !== 11 || localReopened.layers.length !== 3 || localCenter[0] !== 255 || localCenter[3] !== 255 || localOutside[3] !== 0) {
       throw new Error(`Local selection mask mismatch: ${JSON.stringify({ localCenter, localOutside })}`);
     }
     localCanvas.width = 1;
@@ -104,7 +106,51 @@
     if (groupedInside[3] !== 255 || groupedOutside[3] !== 0) throw new Error("Grouped local mask transform mismatch");
     groupedCanvas.width = 1;
     groupedCanvas.height = 1;
-    result.textContent = JSON.stringify({ status: "passed", samples, inverted: { hiddenCenter, visibleOutside }, feathered: { edgeAlpha, farAlpha }, local: { center: localCenter, outside: localOutside }, grouped: { inside: groupedInside, outside: groupedOutside } });
+    const adjustmentMask = smallMask();
+    const background = { ...fullPaint(), strokes: [{ ...paint.strokes[0], id: "background", color: "#808080" }] };
+    const scopedSource = { ...fullPaint(), rasterMaskId: adjustmentMask.id,
+      strokes: [{ ...paint.strokes[0], id: "scoped-source", color: "#808080" }] };
+    const baseAdjustmentDocument = { ...empty, layers: [background, scopedSource, adjustmentMask] };
+    const exposure = { ...createAdjustmentLayer(baseAdjustmentDocument, "exposure", "Selected exposure"),
+      adjustment: { kind: "exposure", parameters: { exposure: 1, offset: 0, gamma: 1 } } };
+    const scopedDocument = addSelectionMaskedAdjustmentLayer(baseAdjustmentDocument, scopedSource.id,
+      rectangularSelectionMask(64, 64, { x: 32, y: 0 }, { x: 63, y: 63 }), exposure);
+    const baselineCanvas = await renderImageStudioDocument(baseAdjustmentDocument);
+    const scopedCanvas = await renderImageStudioDocument(parseDocument(serializeDocument(scopedDocument)));
+    const grayAt = (canvas, x, y) => canvas.getContext("2d").getImageData(x, y, 1, 1).data[0];
+    const baseline = [grayAt(baselineCanvas, 34, 32), grayAt(baselineCanvas, 30, 32), grayAt(baselineCanvas, 55, 32)];
+    const scoped = [grayAt(scopedCanvas, 34, 32), grayAt(scopedCanvas, 30, 32), grayAt(scopedCanvas, 55, 32)];
+    if (scopedDocument.layers.length !== 6 || scoped[0] <= baseline[0] || scoped[1] !== baseline[1] || scoped[2] !== baseline[2]) {
+      throw new Error(`Selected adjustment/source mask mismatch: ${JSON.stringify({ baseline, scoped })}`);
+    }
+    const invertedSource = { ...scopedSource, rasterMaskInverted: true };
+    const invertedSelected = addSelectionMaskedAdjustmentLayer(
+      { ...baseAdjustmentDocument, layers: [background, invertedSource, adjustmentMask] }, invertedSource.id,
+      rectangularSelectionMask(64, 64, { x: 32, y: 0 }, { x: 63, y: 63 }), exposure,
+    );
+    const invertedSelectedCanvas = await renderImageStudioDocument(parseDocument(serializeDocument(invertedSelected)));
+    const invertedSelectedPixels = [grayAt(invertedSelectedCanvas, 34, 32), grayAt(invertedSelectedCanvas, 30, 32), grayAt(invertedSelectedCanvas, 55, 32)];
+    if (invertedSelectedPixels[0] !== 128 || invertedSelectedPixels[1] !== 128 || invertedSelectedPixels[2] !== 255) {
+      throw new Error(`Inverted source/selection intersection mismatch: ${JSON.stringify(invertedSelectedPixels)}`);
+    }
+    const featheredSource = { ...scopedSource, rasterMaskFeatherPx: 4 };
+    const featheredSelected = addSelectionMaskedAdjustmentLayer(
+      { ...baseAdjustmentDocument, layers: [background, featheredSource, adjustmentMask] }, featheredSource.id,
+      rectangularSelectionMask(64, 64, { x: 32, y: 0 }, { x: 63, y: 63 }), exposure,
+    );
+    const featheredSelectedCanvas = await renderImageStudioDocument(parseDocument(serializeDocument(featheredSelected)));
+    const featheredSelectedPixels = [grayAt(featheredSelectedCanvas, 40, 32), grayAt(featheredSelectedCanvas, 30, 32), grayAt(featheredSelectedCanvas, 55, 32)];
+    if (featheredSelectedPixels[0] <= 128 || featheredSelectedPixels[0] >= 255
+      || featheredSelectedPixels[1] !== 128 || featheredSelectedPixels[2] !== 128) {
+      throw new Error(`Feathered source/selection intersection mismatch: ${JSON.stringify(featheredSelectedPixels)}`);
+    }
+    invertedSelectedCanvas.width = 1;
+    featheredSelectedCanvas.width = 1;
+    baselineCanvas.width = 1;
+    baselineCanvas.height = 1;
+    scopedCanvas.width = 1;
+    scopedCanvas.height = 1;
+    result.textContent = JSON.stringify({ status: "passed", samples, inverted: { hiddenCenter, visibleOutside }, feathered: { edgeAlpha, farAlpha }, local: { center: localCenter, outside: localOutside }, grouped: { inside: groupedInside, outside: groupedOutside }, selectedAdjustment: { baseline, scoped, inverted: invertedSelectedPixels, feathered: featheredSelectedPixels } });
     document.documentElement.dataset.result = "passed";
   } catch (error) {
     result.textContent = JSON.stringify({ status: "failed", message: String(error) });

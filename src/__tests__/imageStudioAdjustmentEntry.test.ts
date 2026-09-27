@@ -71,7 +71,8 @@ describe("Image Studio adjustment layer entry", () => {
   it("keeps or bakes the draft only once the dialog resolves, never mutating the document mid-edit", () => {
     expect(studio).toContain('if (outcome.kind === "keep") {');
     expect(studio).toContain("addSelectionMaskedAdjustmentLayer(current, adjustmentDraft.sourceLayerId, adjustmentDraft.selection, outcome.layer)");
-    expect(dialog).toContain("addSelectionMaskedAdjustmentLayer(baseDocument, sourceLayerId, selection, layer)");
+    expect(dialog).toContain("addSelectionMaskedAdjustmentLayer(baseDocument, sourceLayerId, selection, draft)");
+    expect(dialog).toContain("candidate.id === layer.id ? layer : candidate");
     expect(studio).toContain('else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId && !adjustmentDraft.selection)');
     expect(studio).toContain("const bakeAdjustmentDraft = async (layer: AdjustmentLayer, sourceLayerId: string) => {");
   });
