@@ -38,13 +38,21 @@ export function planExport(options: ExportOptions, document?: ImageStudioDocumen
   const largestDecodedLayer = document?.layers.reduce((largest, layer) => Math.max(largest, layer.width * layer.height), 0) ?? 0;
   const documentPixels = document ? document.canvas.width * document.canvas.height : 0;
   const groupBuffers = document ? 1 + maximumGroupDepth(document.layers) : 0;
-  const estimatedBytes = outputPixels * 8 + largestDecodedLayer * 4 + documentPixels * (groupBuffers + 2) * 4;
+  const directEncode = document && canEncodeCompositeDirectly(document, options);
+  // Direct encoding avoids a second output canvas, but still reserves encoder scratch space.
+  const estimatedBytes = directEncode ? outputPixels * 8 + largestDecodedLayer * 4
+    : outputPixels * 8 + largestDecodedLayer * 4 + documentPixels * (groupBuffers + 2) * 4;
   if (estimatedBytes > EXPORT_MEMORY_LIMIT_BYTES) throw new Error("Export exceeds the browser memory budget");
   return {
     mimeType: options.format === "png" ? "image/png" : options.format === "jpeg" ? "image/jpeg" : "image/webp",
     estimatedBytes,
     memoryRisk: estimatedBytes > EXPORT_MEMORY_WARNING_BYTES,
   };
+}
+
+function canEncodeCompositeDirectly(document: ImageStudioDocument, options: ExportOptions): boolean {
+  return options.format !== "jpeg" && options.width === document.canvas.width && options.height === document.canvas.height
+    && document.layers.every((layer) => layer.type !== "group" && layer.type !== "adjustment" && !layer.rasterMaskId);
 }
 
 export function maximumGroupDepth(layers: ImageStudioLayer[]): number {
@@ -74,16 +82,24 @@ export async function exportImage(
   const plan = planExport(options, document);
   const createCanvas = dependencies.createCanvas ?? browserCanvas;
   const composite = await renderImageStudioDocument(document, dependencies);
-  const canvas = createCanvas(options.width, options.height);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas export is unavailable");
-
-  if (options.format === "jpeg") {
-    context.fillStyle = options.jpegBackground;
-    context.fillRect(0, 0, options.width, options.height);
-  }
-  context.drawImage(composite, 0, 0, options.width, options.height);
-  return canvasBlob(canvas, plan.mimeType, options.format === "png" ? undefined : options.quality);
+  try {
+    if (canEncodeCompositeDirectly(document, options)) {
+      dependencies.signal?.throwIfAborted();
+      return await canvasBlob(composite, plan.mimeType, options.format === "png" ? undefined : options.quality);
+    }
+    const canvas = createCanvas(options.width, options.height);
+    try {
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas export is unavailable");
+      if (options.format === "jpeg") {
+        context.fillStyle = options.jpegBackground;
+        context.fillRect(0, 0, options.width, options.height);
+      }
+      context.drawImage(composite, 0, 0, options.width, options.height);
+      dependencies.signal?.throwIfAborted();
+      return await canvasBlob(canvas, plan.mimeType, options.format === "png" ? undefined : options.quality);
+    } finally { canvas.width = 1; canvas.height = 1; }
+  } finally { composite.width = 1; composite.height = 1; }
 }
 
 export interface RenderDependencies {

@@ -26,7 +26,7 @@ import { clampPoint, screenToStage, stageToImage } from "../../../shared/canvas"
 import { colorSchemeSwatches, hexToHsv, hsvToHex, COLOR_SCHEME_KINDS, type ColorSchemeKind } from "../domain/color";
 import {
   canvasBlendMode, createEmptyDocument, createId, LAYER_BLEND_MODES, rasterSourceUrl,
-  touchDocument, type AdjustmentKind, type AdjustmentLayer, type AnnotationElement, type AnnotationTextElement, type AnnotationRectElement, type AnnotationLayer, type ImageStudioDocument, type ImageStudioLayer, type Stroke,
+  touchDocument, type AdjustmentKind, type AdjustmentLayer, type AnnotationElement, type AnnotationTextElement, type AnnotationRectElement, type AnnotationLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer, type Stroke,
 } from "../domain/document";
 import {
   BRUSH_PRESET_IDS, BrushStrokeSession, MAX_STROKE_SAMPLES, fallbackSample, pointerSamples, renderBrushDabs, settingsForPreset,
@@ -37,9 +37,9 @@ import {
 } from "../domain/annotation";
 import { requestNativeColor, sampledPixelColor, type EyeDropperConstructor } from "../domain/eyedropper";
 import { DocumentHistory } from "../domain/history";
-import { PixelTileArchive } from "../domain/pixelTileHistory";
+import { applyPixelTileDiffs, PixelTileArchive, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
-import { resolveRasterEditCoverage } from "../domain/editCoverage";
+import { bakeSelectedAdjustmentTiles, canBakeSelectedAdjustment, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { bindConfiguredShortcuts, loadShortcuts, SHORTCUT_ACTIONS, type ShortcutAction } from "../domain/shortcutSettings";
 import { FileMenu, type DeliveryFormat } from "./FileMenu";
 import { clearPreviewTileCache, previewStorageStatus } from "./previewTiles";
@@ -68,7 +68,7 @@ import { ToolRail } from "./ToolRail";
 import { Inspector, type InspectorTab } from "./Inspector";
 import { LayerPanel } from "./LayerPanel";
 
-const MAX_DIRECT_PIXEL_COUNT = 16_000_000;
+const MAX_DIRECT_PIXEL_COUNT = 4096 * 4096;
 
 const SCHEME_LABEL_KEY: Record<ColorSchemeKind, MessageKey> = {
   complementary: "schemeComplementary",
@@ -150,12 +150,14 @@ export function Studio(): JSX.Element {
     setDocument((current) => historyRef.current.execute(current, recipe(current), label, mergeKey));
     refreshHistory((value) => value + 1);
   }, []);
-  const commitPixel = useCallback((recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, layerId: string, diffs: Parameters<DocumentHistory["executePixel"]>[4]) => {
-    setDocument((current) => historyRef.current.executePixel(current, recipe(current), label, layerId, diffs));
+  const commitPixel = useCallback((recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, layerId: string, diffs: Parameters<DocumentHistory["executePixel"]>[4], addedLayer?: RasterLayer) => {
+    setDocument((current) => historyRef.current.executePixel(current, recipe(current), label, layerId, diffs, addedLayer));
     refreshHistory((value) => value + 1);
   }, []);
   const canRecordPixel = useCallback((diffs: Parameters<DocumentHistory["canRecordPixel"]>[0]) => historyRef.current.canRecordPixel(diffs), []);
   const canRecordPixelBytes = useCallback((bytes: number) => historyRef.current.canRecordPixelBytes(bytes), []);
+  const canRecordPixelLift = useCallback((diffs: Parameters<DocumentHistory["canRecordPixelLift"]>[0], layer: RasterLayer) =>
+    historyRef.current.canRecordPixelLift(diffs, layer), []);
 
   const editSelectedElement = (element: AnnotationElement, field: string) => {
     if (!selected || selected.type !== "annotation" || !selectedEditable || pixelSelection?.layerId === selected.id) return;
@@ -173,9 +175,9 @@ export function Studio(): JSX.Element {
   const {
     cursorPreview, setCursorPreview, pixelSelection, setPixelSelection, marqueeDraft, lassoDraft, draftAnnotation, pixelPreviewVersion,
     directPixelCanvasRef, directPixelLayerIdRef, activePointerIdRef,
-    beginPointer, movePointer, endPointer, clearPixelSelection, invertPixelSelection, restorePixelHistory,
+    beginPointer, movePointer, endPointer, clearPixelSelection, liftPixelSelection, invertPixelSelection, restorePixelHistory,
   } = useRasterToolSession({
-    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelBytes,
+    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelLift, canRecordPixelBytes,
     brushSettings, brushSize, paintColor, changePaintColor, maskValue, magicTolerance, selectionOperation, smudgeStrength, pixelOpacity,
     gradientTransparent, gradientEndColor, shapeTool, textTemplate, shapeTemplate, locale, setError,
     setTool, setInspectorTab, setSelectedElementId, setTextFocusRequest,
@@ -270,6 +272,29 @@ export function Studio(): JSX.Element {
       });
       commit((current) => replaceAdjacentLayers(current, layerId, direction, merged, snapshot), "Merge layers");
     } catch { setError("editFailed"); }
+  };
+
+  const bakeSelectedAdjustmentDraft = (layer: AdjustmentLayer, sourceLayerId: string, selection: PixelSelectionMask) => {
+    const snapshot = documentRef.current;
+    const sourceLayer = snapshot.layers.find((candidate) => candidate.id === sourceLayerId);
+    const canvas = directPixelCanvasRef.current;
+    if (!sourceLayer || sourceLayer.type !== "raster" || !canBakeSelectedAdjustment(snapshot, sourceLayerId, selection, layer)
+      || !canvas || directPixelLayerIdRef.current !== sourceLayerId) { setError("editFailed"); return; }
+    let diffs: PixelTileDiff[] = [];
+    try {
+      const coverage = resolveRasterEditCoverage(snapshot, sourceLayer, selection);
+      if (!coverage) throw new Error("Selection coverage is unavailable");
+      diffs = bakeSelectedAdjustmentTiles(canvas, selection, coverage, layer.adjustment, layer.opacity, layer.blendMode,
+        canRecordPixelBytes, canRecordPixel);
+      if (!diffs.length) return;
+      const value = canvas.toDataURL("image/png");
+      if (documentRef.current.layers !== snapshot.layers) throw new Error("Adjustment source changed");
+      commitPixel((current) => replaceRasterPixels(current, sourceLayerId,
+        { kind: "data-url", value, mimeType: "image/png" }), "Bake selected adjustment", sourceLayerId, diffs);
+    } catch {
+      if (diffs.length) applyPixelTileDiffs(canvas, diffs, "before");
+      setError("editFailed");
+    }
   };
 
   // Bakes a still-uncommitted draft adjustment layer straight into the raster layer it was
@@ -592,8 +617,10 @@ export function Studio(): JSX.Element {
             </select></label></div>}
             {pixelSelection && <div className="selection-controls">
               <span>{t("selectionReady")}</span>
-              <button disabled={!selected || selected.locked || selected.type !== "raster" || selected.id !== pixelSelection.layerId}
+              <button disabled={!selected || !selectedEditable || selectedRasterTooLarge || selected.type !== "raster" || selected.id !== pixelSelection.layerId}
                 onClick={clearPixelSelection}>{t("clearSelectedPixels")}</button>
+              <button disabled={!selected || selected.type !== "raster" || !selectedEditable || selectedRasterTooLarge || selected.id !== pixelSelection.layerId}
+                onClick={liftPixelSelection}>{t("liftSelectedPixels")}</button>
               <button onClick={invertPixelSelection}>{t("invertSelection")}</button>
               <button onClick={() => setPixelSelection(null)}>{t("clearSelection")}</button>
             </div>}
@@ -652,8 +679,9 @@ export function Studio(): JSX.Element {
               return;
             }
             setInspectorTab("properties");
-          } else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId && !adjustmentDraft.selection) {
-            void bakeAdjustmentDraft(outcome.layer, adjustmentDraft.sourceLayerId);
+          } else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId) {
+            if (adjustmentDraft.selection) bakeSelectedAdjustmentDraft(outcome.layer, adjustmentDraft.sourceLayerId, adjustmentDraft.selection);
+            else void bakeAdjustmentDraft(outcome.layer, adjustmentDraft.sourceLayerId);
             setInspectorTab("properties");
           }
         }} />}

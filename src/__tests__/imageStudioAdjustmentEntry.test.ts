@@ -73,7 +73,8 @@ describe("Image Studio adjustment layer entry", () => {
     expect(studio).toContain("addSelectionMaskedAdjustmentLayer(current, adjustmentDraft.sourceLayerId, adjustmentDraft.selection, outcome.layer)");
     expect(dialog).toContain("addSelectionMaskedAdjustmentLayer(baseDocument, sourceLayerId, selection, draft)");
     expect(dialog).toContain("candidate.id === layer.id ? layer : candidate");
-    expect(studio).toContain('else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId && !adjustmentDraft.selection)');
+    expect(studio).toContain('else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId)');
+    expect(studio).toContain('if (adjustmentDraft.selection) bakeSelectedAdjustmentDraft(outcome.layer, adjustmentDraft.sourceLayerId, adjustmentDraft.selection);');
     expect(studio).toContain("const bakeAdjustmentDraft = async (layer: AdjustmentLayer, sourceLayerId: string) => {");
   });
 

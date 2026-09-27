@@ -37,7 +37,7 @@ describe("Image Studio selected Paint pointer session", () => {
         tool, document: studioDocument, selected, selectedEditable: true, selectedRasterTooLarge: false,
         viewport, setViewport, stageRef,
         commit: (recipe) => setStudioDocument((current) => recipe(current)),
-        commitPixel: () => undefined, canRecordPixel: () => true, canRecordPixelBytes: () => true,
+        commitPixel: () => undefined, canRecordPixel: () => true, canRecordPixelLift: () => true, canRecordPixelBytes: () => true,
         brushSettings: studioDocument.brushSettings, brushSize: 1, paintColor: "#ff0000", changePaintColor: () => undefined,
         maskValue: 255, magicTolerance: 0, selectionOperation: "replace", smudgeStrength: 1, pixelOpacity: 1,
         gradientTransparent: false, gradientEndColor: "#000000", shapeTool: "rect",

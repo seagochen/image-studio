@@ -28,12 +28,18 @@ export class PixelTileArchive {
 
   async write(id: string, diffs: readonly PixelTileDiff[]): Promise<PixelTileArchiveRef> {
     if (!id || !diffs.length) throw new Error("Invalid pixel history archive entry");
-    for (const diff of diffs) {
-      await this.cache.put(key(id, "before", diff), bytes(diff.before));
-      await this.cache.put(key(id, "after", diff), bytes(diff.after));
+    const reference = { id, tiles: diffs.map(({ x, y, width, height }) => ({ x, y, width, height })) };
+    try {
+      for (const diff of diffs) {
+        await this.cache.put(key(id, "before", diff), bytes(diff.before));
+        await this.cache.put(key(id, "after", diff), bytes(diff.after));
+      }
+      if (this.cache.stats.persistentError) throw new Error("Pixel history archive is unavailable");
+      return reference;
+    } catch (error) {
+      await this.remove(reference).catch(() => undefined);
+      throw error;
     }
-    if (this.cache.stats.persistentError) throw new Error("Pixel history archive is unavailable");
-    return { id, tiles: diffs.map(({ x, y, width, height }) => ({ x, y, width, height })) };
   }
 
   async read(reference: PixelTileArchiveRef): Promise<PixelTileDiff[]> {

@@ -11,6 +11,15 @@ describe("Image Studio export", () => {
       .toThrow("memory budget");
   });
 
+  it("allows unchanged-size 4K PNG from a simple raster stack without allocating an output canvas", () => {
+    const raster = rasterLayerFromImage({ dataUrl: "data:image/png;base64,AA==", mimeType: "image/png",
+      width: 4096, height: 4096, name: "4K" });
+    const document = { ...createEmptyDocument(), canvas: { width: 4096, height: 4096 }, layers: [raster] };
+    const options = { format: "png" as const, width: 4096, height: 4096, quality: 1, jpegBackground: "#ffffff" };
+    expect(planExport(options, document).estimatedBytes).toBe(4096 * 4096 * 12);
+    expect(() => planExport({ ...options, format: "jpeg" }, document)).toThrow("memory budget");
+  });
+
   it("keeps alpha for PNG and fills the selected background for JPEG", async () => {
     const fills: string[] = [];
     const encodings: Array<[string, number | undefined]> = [];

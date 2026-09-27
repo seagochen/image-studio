@@ -1,6 +1,6 @@
 import { createDrawingLayer } from "../domain/commands";
 import { createEmptyDocument } from "../domain/document";
-import { constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
+import { bakeSelectedAdjustmentTiles, constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { rasterLayerFromImage } from "../domain/importImage";
 
 describe("Image Studio effective edit coverage", () => {
@@ -55,6 +55,42 @@ describe("Image Studio effective edit coverage", () => {
     const half = new Uint8Array([128]);
     expect([...constrainRgbaToCoverage(opaqueRed, clear, half, 1, 1, 0, 0, 1, 1)]).toEqual([255, 0, 0, 127]);
     expect([...constrainRgbaToCoverage(clear, opaqueRed, half, 1, 1, 0, 0, 1, 1)]).toEqual([255, 0, 0, 128]);
+  });
+
+  it("bakes a color adjustment only inside the selected soft-mask coverage", () => {
+    const source = pixelCanvas(3, 1);
+    source.pixels.set([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    const selection = { width: 3, height: 1, pixels: new Uint8Array([0, 1, 0]) };
+    const diffs = bakeSelectedAdjustmentTiles(source.canvas, selection, new Uint8Array([0, 128, 0]),
+      { kind: "invert", parameters: {} }, 1, "normal", () => true, () => true);
+    expect([...source.pixels]).toEqual([255, 0, 0, 255, 128, 127, 128, 255, 0, 0, 255, 255]);
+    expect(diffs).toHaveLength(1);
+    source.canvas.getContext("2d")!.putImageData(new TestImageData(diffs[0].before, 3, 1) as ImageData, 0, 0);
+    expect([...source.pixels]).toEqual([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+  });
+
+  it("lifts only selected visible pixels and erases the source with tile undo", () => {
+    const source = pixelCanvas(3, 1);
+    source.pixels.set([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    const selection = { width: 3, height: 1, pixels: new Uint8Array([0, 1, 0]) };
+    const lifted = liftSelectedRasterTiles(source.canvas, selection, new Uint8Array([0, 128, 0]),
+      () => true, () => true, (width, height) => pixelCanvas(width, height).canvas);
+    expect([lifted.x, lifted.y, lifted.image.width, lifted.image.height]).toEqual([1, 0, 1, 1]);
+    expect([...(lifted.image.getContext("2d")!.getImageData(0, 0, 1, 1).data)]).toEqual([0, 255, 0, 128]);
+    expect([...source.pixels]).toEqual([255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 255]);
+    expect(lifted.diffs).toHaveLength(1);
+    const restored = source.canvas.getContext("2d")!;
+    restored.putImageData(new TestImageData(lifted.diffs[0].before, 3, 1) as ImageData, 0, 0);
+    expect([...source.pixels]).toEqual([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+  });
+
+  it("rejects an unaffordable lift before changing source pixels", () => {
+    const source = pixelCanvas(2, 1);
+    source.pixels.set([255, 0, 0, 255, 0, 255, 0, 255]);
+    expect(() => liftSelectedRasterTiles(source.canvas,
+      { width: 2, height: 1, pixels: new Uint8Array([1, 0]) }, null,
+      () => false, () => true, () => { throw new Error("should not allocate"); })).toThrow("history budget");
+    expect([...source.pixels]).toEqual([255, 0, 0, 255, 0, 255, 0, 255]);
   });
 
   it("reads large masks in bounded rows without changing their coverage", () => {

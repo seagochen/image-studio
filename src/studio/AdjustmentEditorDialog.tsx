@@ -3,6 +3,7 @@ import type { AdjustmentLayer, ImageStudioDocument } from "../domain/document";
 import { addLayer, addSelectionMaskedAdjustmentLayer } from "../domain/commands";
 import type { PixelSelectionMask } from "../domain/pixelTools";
 import { defaultAdjustment, previewLuminosityHistogram } from "../domain/adjustmentEngine";
+import { canBakeSelectedAdjustment } from "../domain/editCoverage";
 import { useCompositePreview } from "./useCompositePreview";
 import { ADJUSTMENT_KIND_LABELS, AdjustmentPanel, PANEL_LABELS } from "./AdjustmentPanel";
 import { trapDialogFocus } from "./dialogFocus";
@@ -57,7 +58,9 @@ export function AdjustmentEditorDialog({ document: baseDocument, draft, sourceLa
   const previewHistogram = useMemo(() => previewCanvas ? previewLuminosityHistogram(previewCanvas) : undefined, [previewCanvas]);
 
   const sourceLayer = sourceLayerId ? baseDocument.layers.find((candidate) => candidate.id === sourceLayerId) : undefined;
-  const canBake = !selection && sourceLayer?.type === "raster" && !sourceLayer.locked && !layer.locked;
+  const canBake = sourceLayer?.type === "raster" && !sourceLayer.locked && !layer.locked
+    && (selection ? Boolean(sourceLayerId && canBakeSelectedAdjustment(baseDocument, sourceLayerId, selection, layer))
+      : !sourceLayer.rasterMaskId);
   const title = ADJUSTMENT_KIND_LABELS[locale][layer.adjustment.kind];
 
   return <div ref={root} className="pixel-editor-backdrop" role="dialog" aria-modal="true" aria-label={title} onKeyDown={(event) => {

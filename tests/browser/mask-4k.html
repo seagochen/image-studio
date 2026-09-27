@@ -6,7 +6,8 @@
 <script type="module">
   import { createDrawingLayer } from "../../src/domain/commands.ts";
   import { createEmptyDocument } from "../../src/domain/document.ts";
-  import { coverageFromDrawingMask } from "../../src/domain/editCoverage.ts";
+  import { coverageFromDrawingMask, liftSelectedRasterTiles } from "../../src/domain/editCoverage.ts";
+  import { applyPixelTileDiffs } from "../../src/domain/pixelTileHistory.ts";
   import { clearSelectedTile, rectangularSelectionMask, selectedTileRects } from "../../src/domain/pixelTools.ts";
   import { encodeSelectionRuns, paintSelectionRuns } from "../../src/domain/selectionMaskRuns.ts";
 
@@ -35,6 +36,22 @@
         throw new Error("Unexpected selected tile deletion");
       }
     }
+    const source = Object.assign(document.createElement("canvas"), { width: size, height: size });
+    const sourceContext = source.getContext("2d");
+    if (!sourceContext) throw new Error("4K source canvas is unavailable");
+    sourceContext.fillStyle = "#ff0000"; sourceContext.fillRect(255, 300, 2, 1);
+    coverage[300 * size + 255] = 128; coverage[300 * size + 256] = 255;
+    const liftStart = performance.now();
+    const lifted = liftSelectedRasterTiles(source, selection, coverage,
+      (bytes) => bytes <= 12 * 1024 * 1024, () => true);
+    const liftElapsedMs = Math.round(performance.now() - liftStart);
+    const liftedPixels = [...lifted.image.getContext("2d").getImageData(0, 0, 2, 1).data];
+    const clearedAlpha = sourceContext.getImageData(255, 300, 2, 1).data[3];
+    applyPixelTileDiffs(source, lifted.diffs, "before");
+    const restoredAlpha = sourceContext.getImageData(255, 300, 2, 1).data[3];
+    if (lifted.diffs.length !== 2 || liftedPixels[3] !== 128 || liftedPixels[7] !== 255
+      || clearedAlpha !== 0 || restoredAlpha !== 255) throw new Error("Unexpected 4K selection lift");
+    lifted.image.width = 1; lifted.image.height = 1; source.width = 1; source.height = 1;
     const broadSelection = rectangularSelectionMask(size, size, { x: 1024, y: 1024 }, { x: 3071, y: 3071 });
     const localStart = performance.now();
     const runs = encodeSelectionRuns(broadSelection);
@@ -50,7 +67,8 @@
     localCanvas.height = 1;
     result.textContent = JSON.stringify({ status: "passed", size, featherPx: 8, elapsedMs,
       coverageBytes: coverage.byteLength, selectionBytes: selection.pixels.byteLength, touchedTiles: tiles.length, sample,
-      localElapsedMs, localRuns: runs.length, localInside, localOutside });
+      localElapsedMs, localRuns: runs.length, localInside, localOutside,
+      liftElapsedMs, liftedAlpha: [liftedPixels[3], liftedPixels[7]], liftedTiles: lifted.diffs.length, restoredAlpha });
     document.documentElement.dataset.result = "passed";
   } catch (error) {
     result.textContent = JSON.stringify({ status: "failed", message: String(error) });

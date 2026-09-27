@@ -1,4 +1,4 @@
-import type { ImageStudioDocument, RasterSource } from "./document";
+import type { ImageStudioDocument, RasterLayer, RasterSource } from "./document";
 import { pixelTileDiffBytes, PixelTileArchive, type PixelTileArchiveRef, type PixelTileDiff } from "./pixelTileHistory";
 
 export interface HistoryOptions { maxEntries: number; maxBytes: number }
@@ -15,6 +15,9 @@ interface PixelHistoryEntry {
   label: string;
   layerId: string;
   diffs: PixelTileDiff[];
+  addedLayer?: RasterLayer;
+  beforeSelection?: ImageStudioDocument["selection"];
+  afterSelection?: ImageStudioDocument["selection"];
   archive?: PixelTileArchiveRef;
   offloading?: boolean;
   bytes: number;
@@ -66,10 +69,13 @@ export class DocumentHistory {
    * Direct-pixel edits keep the current Raster payload in the document for
    * save/export, but their undo entry contains only affected RGBA tiles.
    */
-  executePixel(document: ImageStudioDocument, next: ImageStudioDocument, label: string, layerId: string, diffs: readonly PixelTileDiff[]): ImageStudioDocument {
-    const bytes = pixelTileDiffBytes(diffs);
-    if (!layerId || !diffs.length || bytes > this.options.maxBytes) return document;
-    this.undoEntries.push({ kind: "pixel", label, layerId, diffs: [...diffs], bytes });
+  executePixel(document: ImageStudioDocument, next: ImageStudioDocument, label: string, layerId: string, diffs: readonly PixelTileDiff[], addedLayer?: RasterLayer): ImageStudioDocument {
+    const bytes = pixelTileDiffBytes(diffs) + (addedLayer ? addedLayerBytes(addedLayer) : 0);
+    if (!layerId || !diffs.length || next === document || bytes > this.options.maxBytes
+      || (addedLayer && (document.layers.some((layer) => layer.id === addedLayer.id)
+        || !next.layers.some((layer) => layer.id === addedLayer.id)))) return document;
+    this.undoEntries.push({ kind: "pixel", label, layerId, diffs: [...diffs], bytes,
+      ...(addedLayer ? { addedLayer, beforeSelection: document.selection, afterSelection: next.selection } : {}) });
     this.clearRedo();
     this.trim();
     void this.offloadPixelEntries();
@@ -106,6 +112,10 @@ export class DocumentHistory {
 
   canRecordPixelBytes(bytes: number): boolean {
     return Number.isSafeInteger(bytes) && bytes > 0 && bytes <= this.options.maxBytes;
+  }
+
+  canRecordPixelLift(diffs: readonly PixelTileDiff[], addedLayer: RasterLayer): boolean {
+    return diffs.length > 0 && this.canRecordPixelBytes(pixelTileDiffBytes(diffs) + addedLayerBytes(addedLayer));
   }
 
   retainedAssetIds(): string[] {
@@ -157,7 +167,15 @@ export class DocumentHistory {
       return Promise.reject(new Error("Pixel history requires a resolver"));
     }
     const diffs = entry.diffs.length ? Promise.resolve(entry.diffs) : entry.archive && this.pixelArchive ? this.pixelArchive.read(entry.archive) : Promise.reject(new Error("Pixel history archive is unavailable"));
-    return diffs.then((resolved) => resolvePixel(document, entry.layerId, resolved, direction)).then((next) => {
+    if (entry.addedLayer && (direction === "before" ? !document.layers.some((layer) => layer.id === entry.addedLayer?.id)
+      : document.layers.some((layer) => layer.id === entry.addedLayer?.id))) {
+      source.push(entry);
+      return Promise.reject(new Error("Pixel history layer structure has changed"));
+    }
+    return diffs.then((resolved) => resolvePixel(document, entry.layerId, resolved, direction)).then((restored) => {
+      const next = !entry.addedLayer ? restored : direction === "before"
+        ? { ...restored, layers: restored.layers.filter((layer) => layer.id !== entry.addedLayer?.id), selection: entry.beforeSelection! }
+        : { ...restored, layers: [...restored.layers, entry.addedLayer], selection: entry.afterSelection! };
       destination.push(entry);
       return next;
     }, (error: unknown) => {
@@ -196,6 +214,10 @@ export class DocumentHistory {
 
 function isPixelEntry(entry: HistoryEntry): entry is PixelHistoryEntry { return "kind" in entry && entry.kind === "pixel"; }
 function pixelHistoryHotBytes(entries: readonly HistoryEntry[]): number { return entries.reduce((total, entry) => total + (isPixelEntry(entry) ? pixelTileDiffBytes(entry.diffs) : 0), 0); }
+
+function addedLayerBytes(layer: RasterLayer): number {
+  return layer.source.kind === "data-url" ? layer.source.value.length * 2 + 2_048 : 2_048;
+}
 
 function collectAssetIds(document: ImageStudioDocument, ids: Set<string>): void {
   for (const layer of document.layers) {

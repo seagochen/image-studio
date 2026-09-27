@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from "react";
 import type Konva from "konva";
 import type { Locale, MessageKey } from "../i18n";
-import { clampPoint, screenToStage, stageToImage, type Viewport } from "../../../shared/canvas";
+import { clampPoint, imageToStage, screenToStage, stageToImage, type Viewport } from "../../../shared/canvas";
 import { layerAncestors } from "../domain/layerHierarchy";
 import { addLayer, addSelectionMaskedLocalLayer, addStroke, createAnnotationLayer, replaceLastStroke, replaceRasterPixels } from "../domain/commands";
 import {
   createId, rasterSourceUrl, type AnnotationElement, type AnnotationRectElement, type AnnotationTextElement,
-  type ImageStudioDocument, type ImageStudioLayer, type Stroke,
+  type ImageStudioDocument, type ImageStudioLayer, type RasterLayer, type Stroke,
 } from "../domain/document";
 import { sampledPixelColor } from "../domain/eyedropper";
 import { encodeSelectionRuns } from "../domain/selectionMaskRuns";
@@ -21,7 +21,7 @@ import {
   combineSelectionMask, contiguousColorSelectionMask, interpolatedPoints, invertSelectionMask,
   ellipticalSelectionMask, polygonSelectionMask, rectangularSelectionMask, type PixelSelectionMask, type SelectionOperation,
 } from "../domain/pixelTools";
-import { constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
+import { constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { applyPixelTileDiffs, PixelTileRecorder, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, TOOL_LABELS, type PixelSelection, type MarqueeDraft, type ShapeTool, type Tool } from "./tools";
 
@@ -38,8 +38,9 @@ export interface UseRasterToolSessionOptions {
   setViewport: Dispatch<SetStateAction<Viewport>>;
   stageRef: RefObject<Konva.Stage>;
   commit: (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, mergeKey?: string) => void;
-  commitPixel: (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, layerId: string, diffs: readonly PixelTileDiff[]) => void;
+  commitPixel: (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, layerId: string, diffs: readonly PixelTileDiff[], addedLayer?: RasterLayer) => void;
   canRecordPixel: (diffs: readonly PixelTileDiff[]) => boolean;
+  canRecordPixelLift: (diffs: readonly PixelTileDiff[], addedLayer: RasterLayer) => boolean;
   canRecordPixelBytes: (bytes: number) => boolean;
   brushSettings: BrushSettings;
   brushSize: number;
@@ -80,6 +81,7 @@ export interface UseRasterToolSessionResult {
   movePointer: (event?: PointerKonvaEvent) => void;
   endPointer: (event?: PointerKonvaEvent) => void;
   clearPixelSelection: () => void;
+  liftPixelSelection: () => void;
   invertPixelSelection: () => void;
 }
 
@@ -92,7 +94,7 @@ export interface UseRasterToolSessionResult {
  */
 export function useRasterToolSession(options: UseRasterToolSessionOptions): UseRasterToolSessionResult {
   const {
-    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelBytes,
+    tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelLift, canRecordPixelBytes,
     brushSettings, brushSize, paintColor, changePaintColor, maskValue, magicTolerance, selectionOperation, smudgeStrength, pixelOpacity,
     gradientTransparent, gradientEndColor, shapeTool, textTemplate, shapeTemplate, locale, setError,
     setTool, setInspectorTab, setSelectedElementId, setTextFocusRequest,
@@ -177,7 +179,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
   }, [pixelSelection, selected?.id]);
 
   const clearPixelSelection = useCallback(() => {
-    if (!selected || selected.locked) return;
+    if (!selected || !selectedEditable || selectedRasterTooLarge) return;
     if (!pixelSelection || pixelSelection.layerId !== selected.id || selected.type !== "raster") return;
     const canvas = directPixelCanvasRef.current;
     if (!canvas) return;
@@ -191,7 +193,43 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     } catch { if (diffs) applyPixelTileDiffs(canvas, diffs, "before"); refreshPixelPreview((value) => value + 1); setError("editFailed"); return; }
     setPixelSelection(null);
     refreshPixelPreview((value) => value + 1);
-  }, [canRecordPixel, canRecordPixelBytes, commitPixel, document, pixelSelection, refreshPixelPreview, selected, setError]);
+  }, [canRecordPixel, canRecordPixelBytes, commitPixel, document, pixelSelection, refreshPixelPreview, selected, selectedEditable, selectedRasterTooLarge, setError]);
+
+  const liftPixelSelection = useCallback(() => {
+    if (!selected || selected.type !== "raster" || !selectedEditable || selectedRasterTooLarge
+      || !pixelSelection || pixelSelection.layerId !== selected.id || directPixelLayerIdRef.current !== selected.id) return;
+    const canvas = directPixelCanvasRef.current;
+    if (!canvas) return;
+    let diffs: PixelTileDiff[] = [];
+    let image: HTMLCanvasElement | null = null;
+    try {
+      const coverage = resolveRasterEditCoverage(document, selected, pixelSelection);
+      const lifted = liftSelectedRasterTiles(canvas, pixelSelection, coverage, canRecordPixelBytes, canRecordPixel);
+      image = lifted.image; diffs = lifted.diffs;
+      const position = imageToStage({ x: lifted.x, y: lifted.y }, selected.transform);
+      const layer: RasterLayer = {
+        ...selected, id: createId("raster"), name: selected.name + " selection", locked: false,
+        rasterMaskId: undefined, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined,
+        width: image.width, height: image.height,
+        transform: { ...selected.transform, x: position.x, y: position.y },
+        source: { kind: "data-url", value: image.toDataURL("image/png"), mimeType: "image/png" },
+      };
+      if (!canRecordPixelLift(diffs, layer)) throw new Error("Selection lift exceeds history budget");
+      const source = { kind: "data-url" as const, value: canvas.toDataURL("image/png"), mimeType: "image/png" };
+      commitPixel((current) => addLayer(replaceRasterPixels(current, selected.id, source), layer),
+        "Lift selected pixels", selected.id, diffs, layer);
+      setPixelSelection(null);
+      setTool("select");
+      refreshPixelPreview((value) => value + 1);
+    } catch {
+      if (diffs.length) applyPixelTileDiffs(canvas, diffs, "before");
+      refreshPixelPreview((value) => value + 1);
+      setError("editFailed");
+    } finally {
+      if (image) { image.width = 1; image.height = 1; }
+    }
+  }, [canRecordPixel, canRecordPixelBytes, canRecordPixelLift, commitPixel, document, pixelSelection,
+    selected, selectedEditable, selectedRasterTooLarge, setError, setTool]);
 
   const applyPixelSelection = useCallback((candidate: PixelSelectionMask) => {
     if (!selected || !["raster", "paint", "annotation"].includes(selected.type)) return;
@@ -574,17 +612,26 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       directPixelCanvasRef.current = canvas;
       directPixelLayerIdRef.current = layerId;
     }
-    applyPixelTileDiffs(canvas, diffs, direction);
-    const mimeType = layer.source.mimeType === "image/jpeg" || layer.source.mimeType === "image/webp" ? layer.source.mimeType : "image/png";
-    const next = replaceRasterPixels(current, layerId, { kind: "data-url", value: canvas.toDataURL(mimeType), mimeType });
-    refreshPixelPreview((value) => value + 1);
-    return next;
+    const rollback = new PixelTileRecorder(canvas);
+    try {
+      for (const diff of diffs) rollback.capture(diff.x, diff.y, diff.width, diff.height);
+      applyPixelTileDiffs(canvas, diffs, direction);
+      const mimeType = "image/png";
+      const next = replaceRasterPixels(current, layerId, { kind: "data-url", value: canvas.toDataURL(mimeType), mimeType });
+      refreshPixelPreview((value) => value + 1);
+      return next;
+    } catch (error) {
+      try { applyPixelTileDiffs(canvas, rollback.finish(), "before"); }
+      catch { directPixelCanvasRef.current = null; directPixelLayerIdRef.current = null; }
+      refreshPixelPreview((value) => value + 1);
+      throw error;
+    }
   }, []);
 
   return {
     cursorPreview, setCursorPreview, pixelSelection, setPixelSelection, marqueeDraft, lassoDraft, draftAnnotation, pixelPreviewVersion,
     directPixelCanvasRef, directPixelLayerIdRef, activePointerIdRef,
-    beginPointer, movePointer, endPointer, clearPixelSelection, invertPixelSelection, restorePixelHistory,
+    beginPointer, movePointer, endPointer, clearPixelSelection, liftPixelSelection, invertPixelSelection, restorePixelHistory,
   };
 }
 

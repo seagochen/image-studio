@@ -1,4 +1,6 @@
-import type { DrawingLayer, ImageStudioDocument, RasterLayer } from "./document";
+import type { AdjustmentDefinition, AdjustmentLayer, DrawingLayer, ImageStudioDocument, LayerBlendMode, RasterLayer } from "./document";
+import { layerIsEditable } from "./layerHierarchy";
+import { adjustmentKernel, isSpatialAdjustment } from "./adjustmentEngine";
 import { renderDrawingLayer } from "./exportImage";
 import { clearSelectedTile, selectedTileRects, type PixelSelectionMask } from "./pixelTools";
 import { applyPixelTileDiffs, PIXEL_HISTORY_TILE_EDGE, PixelTileRecorder, type PixelTileDiff } from "./pixelTileHistory";
@@ -126,6 +128,104 @@ export function eraseSelectedRasterTiles(
     return diffs;
   } catch (error) {
     applyPixelTileDiffs(canvas, recorder.finish(), "before");
+    throw error;
+  }
+}
+
+/** A selected bake changes only one raw Raster; complex stacks keep the non-destructive layer path. */
+export function canBakeSelectedAdjustment(document: ImageStudioDocument, sourceId: string,
+  selection: PixelSelectionMask, adjustment: AdjustmentLayer): boolean {
+  const source = document.layers.find((layer) => layer.id === sourceId);
+  if (!source || source.type !== "raster" || !source.visible || !layerIsEditable(document.layers, sourceId)
+    || source.opacity !== 1 || source.blendMode !== "normal" || adjustment.locked
+    || isSpatialAdjustment(adjustment.adjustment.kind)
+    || source.width !== selection.width || source.height !== selection.height
+    || selection.pixels.length !== source.width * source.height) return false;
+  return !document.layers.some((layer) => layer.id !== sourceId && layer.type !== "mask"
+    && layer.visible && layer.opacity > 0 && (layer.parentId ?? null) === (source.parentId ?? null));
+}
+
+/** Bakes a color adjustment only into selected, mask-authorized raster tiles. */
+export function bakeSelectedAdjustmentTiles(
+  canvas: HTMLCanvasElement, selection: PixelSelectionMask, coverage: Uint8Array,
+  adjustment: AdjustmentDefinition, opacity: number, blendMode: LayerBlendMode,
+  canRecordBytes: (bytes: number) => boolean, canRecordDiffs: (diffs: readonly PixelTileDiff[]) => boolean,
+): PixelTileDiff[] {
+  if (isSpatialAdjustment(adjustment.kind)) throw new Error("Spatial adjustment requires a halo-aware bake");
+  if (canvas.width !== selection.width || canvas.height !== selection.height
+    || selection.pixels.length !== canvas.width * canvas.height || coverage.length !== selection.pixels.length) {
+    throw new Error("Selection dimensions do not match raster canvas");
+  }
+  const tiles = selectedTileRects(selection, PIXEL_HISTORY_TILE_EDGE);
+  const bytes = tiles.reduce((total, tile) => total + tile.width * tile.height * 8, 0);
+  if (!tiles.length || !canRecordBytes(bytes)) throw new Error("Selection adjustment exceeds history budget");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Pixel history canvas is unavailable");
+  const kernel = adjustmentKernel(adjustment, opacity, blendMode);
+  const recorder = new PixelTileRecorder(canvas);
+  try {
+    for (const tile of tiles) {
+      recorder.capture(tile.x, tile.y, tile.width, tile.height);
+      const before = context.getImageData(tile.x, tile.y, tile.width, tile.height);
+      const adjusted = new Uint8ClampedArray(before.data);
+      kernel(adjusted);
+      before.data.set(constrainRgbaToCoverage(before.data, adjusted, coverage,
+        canvas.width, canvas.height, tile.x, tile.y, tile.width, tile.height));
+      context.putImageData(before, tile.x, tile.y);
+    }
+    const diffs = recorder.finish();
+    if (diffs.length && !canRecordDiffs(diffs)) throw new Error("Selection adjustment exceeds history budget");
+    return diffs;
+  } catch (error) {
+    applyPixelTileDiffs(canvas, recorder.finish(), "before");
+    throw error;
+  }
+}
+
+/** Separates selected visible pixels into a cropped image and erases their raw source pixels.
+ * The source's owned mask is baked into the lifted pixels exactly once; source
+ * erasure itself is binary so the original mask cannot reveal a second copy. */
+export function liftSelectedRasterTiles(
+  canvas: HTMLCanvasElement, selection: PixelSelectionMask, coverage: Uint8Array | null,
+  canRecordBytes: (bytes: number) => boolean, canRecordDiffs: (diffs: readonly PixelTileDiff[]) => boolean,
+  createCanvas: (width: number, height: number) => HTMLCanvasElement = defaultCanvas,
+): { image: HTMLCanvasElement; x: number; y: number; diffs: PixelTileDiff[] } {
+  if (canvas.width !== selection.width || canvas.height !== selection.height
+    || selection.pixels.length !== canvas.width * canvas.height
+    || (coverage && coverage.length !== selection.pixels.length)) throw new Error("Selection dimensions do not match raster canvas");
+  const tiles = selectedTileRects(selection, PIXEL_HISTORY_TILE_EDGE);
+  const tileBytes = tiles.reduce((total, tile) => total + tile.width * tile.height * 8, 0);
+  if (!tiles.length || !canRecordBytes(tileBytes)) throw new Error("Selection edit exceeds history budget");
+  let left = canvas.width, top = canvas.height, right = 0, bottom = 0;
+  for (let y = 0; y < canvas.height; y += 1) for (let x = 0; x < canvas.width; x += 1) {
+    const index = y * canvas.width + x;
+    if (!selection.pixels[index] || (coverage && !coverage[index])) continue;
+    left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + 1); bottom = Math.max(bottom, y + 1);
+  }
+  if (right <= left || bottom <= top) throw new Error("Selection has no visible pixels");
+  const image = createCanvas(right - left, bottom - top);
+  const sourceContext = canvas.getContext("2d", { willReadFrequently: true });
+  const imageContext = image.getContext("2d", { willReadFrequently: true });
+  try {
+    if (!sourceContext || !imageContext) throw new Error("Pixel canvas is unavailable");
+    const rowsPerChunk = Math.max(1, Math.floor(1_048_576 / image.width));
+    for (let row = 0; row < image.height; row += rowsPerChunk) {
+      const rows = Math.min(rowsPerChunk, image.height - row);
+      const pixels = sourceContext.getImageData(left, top + row, image.width, rows);
+      for (let index = 0; index < image.width * rows; index += 1) {
+        const localX = index % image.width, localY = Math.floor(index / image.width);
+        const coverageIndex = (top + row + localY) * canvas.width + left + localX;
+        const weight = selection.pixels[coverageIndex] ? (coverage?.[coverageIndex] ?? 255) : 0;
+        const offset = index * 4;
+        pixels.data[offset + 3] = Math.round(pixels.data[offset + 3] * weight / 255);
+        if (!pixels.data[offset + 3]) pixels.data.fill(0, offset, offset + 4);
+      }
+      imageContext.putImageData(pixels, 0, row);
+    }
+    const diffs = eraseSelectedRasterTiles(canvas, selection, null, canRecordBytes, canRecordDiffs);
+    return { image, x: left, y: top, diffs };
+  } catch (error) {
+    image.width = 1; image.height = 1;
     throw error;
   }
 }
