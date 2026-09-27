@@ -85,7 +85,7 @@
     const localContext = localCanvas.getContext("2d");
     const localCenter = [...localContext.getImageData(32, 32, 1, 1).data];
     const localOutside = [...localContext.getImageData(4, 4, 1, 1).data];
-    if (localReopened.version !== 11 || localReopened.layers.length !== 3 || localCenter[0] !== 255 || localCenter[3] !== 255 || localOutside[3] !== 0) {
+    if (localReopened.version !== 12 || localReopened.layers.length !== 3 || localCenter[0] !== 255 || localCenter[3] !== 255 || localOutside[3] !== 0) {
       throw new Error(`Local selection mask mismatch: ${JSON.stringify({ localCenter, localOutside })}`);
     }
     localCanvas.width = 1;

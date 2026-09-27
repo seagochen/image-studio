@@ -1,5 +1,5 @@
 import { canvasBlendMode, rasterSourceUrl, type AnnotationLayer, type DrawingLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer } from "./document";
-import { paintSelectionRuns } from "./selectionMaskRuns";
+import { decodeSelectionRuns, paintSelectionRuns } from "./selectionMaskRuns";
 import { createBrushDabs, renderBrushDabs } from "./brushEngine";
 import { adjustmentKernel, ADJUSTMENT_CHUNK_PIXELS, applySpatialAdjustment, isSpatialAdjustment, spatialRadius, yieldRenderTask } from "./adjustmentEngine";
 import { adjacentMaskLayerIds } from "./adjustmentMasking";
@@ -302,13 +302,26 @@ function applyRasterMask(
     const output = inverted ? 1 - weight : weight;
     image.data[index] = 255; image.data[index + 1] = 255; image.data[index + 2] = 255; image.data[index + 3] = Math.round(output * 255);
   }
+  const padding = featherPx > 0 ? Math.ceil(featherPx * scale * 3) : 0;
+  if (mask.clipRuns) {
+    const clip = decodeSelectionRuns(mask.clipRuns, mask.width, mask.height);
+    const contentWidth = maskCanvas.width - padding * 2;
+    const contentHeight = maskCanvas.height - padding * 2;
+    for (let y = 0; y < contentHeight; y += 1) for (let x = 0; x < contentWidth; x += 1) {
+      const sourceX = Math.min(mask.width - 1, Math.floor(x * mask.width / contentWidth));
+      const sourceY = Math.min(mask.height - 1, Math.floor(y * mask.height / contentHeight));
+      const selected = clip[sourceY * mask.width + sourceX] !== 0;
+      if (selected === (mask.clipInverted === true)) {
+        image.data[((y + padding) * maskCanvas.width + x + padding) * 4 + 3] = 0;
+      }
+    }
+  }
   maskContext.putImageData(image, 0, 0);
   targetContext.save();
   // The destination may be a group or layer scratch canvas whose logical drawing
   // context is already scaled. Both bitmaps are physical-pixel buffers here.
   targetContext.setTransform(1, 0, 0, 1, 0, 0);
   targetContext.globalCompositeOperation = "destination-in";
-  const padding = featherPx > 0 ? Math.ceil(featherPx * scale * 3) : 0;
   targetContext.drawImage(maskCanvas, padding, padding, maskCanvas.width - padding * 2, maskCanvas.height - padding * 2, 0, 0, target.width, target.height);
   targetContext.restore();
   maskCanvas.width = 1; maskCanvas.height = 1;

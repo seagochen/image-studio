@@ -18,6 +18,24 @@ export function encodeSelectionRuns(selection: PixelSelectionMask): number[] {
   if (runs.length < 2) throw new Error("Selection is empty");
   return runs;
 }
+export function decodeSelectionRuns(runs: readonly number[], width: number, height: number): Uint8Array {
+  if (runs.length < 2 || runs.length > MAX_SELECTION_MASK_RUNS || !Number.isSafeInteger(width * height)) {
+    throw new Error("Invalid selection mask runs");
+  }
+  const pixels = new Uint8Array(width * height);
+  let offset = 0;
+  for (let index = 0; index < runs.length; index += 1) {
+    const count = runs[index];
+    if (!Number.isInteger(count) || (index === 0 ? count < 0 : count <= 0) || offset + count > pixels.length) {
+      throw new Error("Invalid selection mask runs");
+    }
+    if (index % 2 === 1) pixels.fill(1, offset, offset + count);
+    offset += count;
+  }
+  if (offset !== pixels.length) throw new Error("Invalid selection mask runs");
+  return pixels;
+}
+
 
 export function paintSelectionRuns(context: CanvasRenderingContext2D, runs: readonly number[], width: number, height: number): void {
   if (runs.length < 2 || runs.length > MAX_SELECTION_MASK_RUNS || !Number.isSafeInteger(width * height)) {

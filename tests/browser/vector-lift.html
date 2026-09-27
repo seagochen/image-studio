@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio existing vector selection smoke test</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { addLayer, addStroke, createAnnotationLayer, createDrawingLayer, liftSelectedVectorLayer,
+    replaceAnnotationElement, setLayerTransform } from "../../src/domain/commands.ts";
+  import { createEmptyDocument, parseDocument, serializeDocument } from "../../src/domain/document.ts";
+  import { renderImageStudioDocument } from "../../src/domain/exportImage.ts";
+  import { rectangularSelectionMask } from "../../src/domain/pixelTools.ts";
+
+  const result = document.getElementById("result");
+  const empty = { ...createEmptyDocument(), canvas: { width: 64, height: 64 } };
+  const selection = rectangularSelectionMask(64, 64, { x: 16, y: 16 }, { x: 47, y: 47 });
+  const pixel = (canvas, x, y) => [...canvas.getContext("2d").getImageData(x, y, 1, 1).data];
+  const render = async (value) => renderImageStudioDocument(parseDocument(serializeDocument(value)));
+  try {
+    const samples = [];
+    for (const type of ["paint", "annotation"]) {
+      const source = type === "paint"
+        ? { ...createDrawingLayer(empty, "paint", "Original paint"), strokes: [{
+          id: "source-stroke", points: [{ x: 0, y: 32 }, { x: 64, y: 32 }],
+          size: 80, mode: "paint", value: 255, color: "#ff0000",
+        }] }
+        : { ...createAnnotationLayer(empty, "Original annotation"), elements: [{
+          id: "source-rect", kind: "rect", x: 0, y: 0, width: 64, height: 64,
+          rotation: 0, fill: "#ff0000", stroke: "#ff0000", strokeWidth: 0, cornerRadius: 0,
+        }] };
+      const before = addLayer(empty, source);
+      const lifted = liftSelectedVectorLayer(before, source.id, selection);
+      if (lifted === before || lifted.layers.length !== 4) throw new Error(type + " lift was rejected");
+      const local = lifted.layers.find((layer) => layer.id === lifted.selection.layerId);
+      const initial = await render(before);
+      const unchanged = await render(lifted);
+      const baseline = pixel(initial, 18, 32), preserved = pixel(unchanged, 18, 32);
+      if (baseline.join(",") !== preserved.join(",") || pixel(unchanged, 4, 32)[3] !== 255) {
+        throw new Error(type + " changed visual output before editing");
+      }
+      const moved = setLayerTransform(lifted, local.id, { ...local.transform, x: 8 });
+      const movedCanvas = await render(moved);
+      const vacated = pixel(movedCanvas, 18, 32), outside = pixel(movedCanvas, 4, 32);
+      if (vacated[3] !== 0 || outside[0] !== 255 || outside[3] !== 255) {
+        throw new Error(type + " transform leaked into the protected region: " + JSON.stringify({ vacated, outside }));
+      }
+      const edited = type === "paint"
+        ? addStroke(lifted, local.id, { id: "local-erase", points: [{ x: 32, y: 32 }],
+          size: 18, mode: "erase", value: 255 })
+        : replaceAnnotationElement(lifted, local.id, { ...local.elements[0], fill: "#00ff00" });
+      const editedCanvas = await render(edited);
+      const center = pixel(editedCanvas, 32, 32), outer = pixel(editedCanvas, 4, 32);
+      if (type === "paint" ? center[3] !== 0 : center[1] !== 255 || center[0] !== 0) {
+        throw new Error(type + " local edit was not visible: " + center);
+      }
+      if (outer[0] !== 255 || outer[1] !== 0 || outer[3] !== 255) throw new Error(type + " edited outside selection");
+      samples.push({ type, baseline, preserved, vacated, outside, center, outer });
+      for (const canvas of [initial, unchanged, movedCanvas, editedCanvas]) { canvas.width = 1; canvas.height = 1; }
+      const ownedMask = { ...createDrawingLayer(empty, "mask", "Soft mask"), opacity: 1,
+        strokes: [{ id: "soft", points: [{ x: 32, y: 32 }], size: 90, mode: "paint", value: 128 }] };
+      const maskedSource = { ...source, rasterMaskId: ownedMask.id, rasterMaskFeatherPx: 2 };
+      const maskedBefore = { ...before, layers: [maskedSource, ownedMask] };
+      const maskedLifted = liftSelectedVectorLayer(maskedBefore, source.id, selection);
+      if (maskedLifted === maskedBefore || maskedLifted.layers.length !== 4) throw new Error(type + " masked lift rejected");
+      const maskedLocal = maskedLifted.layers.find((layer) => layer.id === maskedLifted.selection.layerId);
+      const maskedInitial = await render(maskedBefore);
+      const maskedUnchanged = await render(maskedLifted);
+      for (const [x, y] of [[4, 32], [18, 32], [32, 32], [48, 32]]) {
+        const original = pixel(maskedInitial, x, y), split = pixel(maskedUnchanged, x, y);
+        if (Math.abs(original[3] - split[3]) > 1 || original[0] !== split[0]) {
+          throw new Error(type + " masked lift changed output: " + JSON.stringify({ x, y, original, split }));
+        }
+      }
+      const maskedMoved = await render(setLayerTransform(maskedLifted, maskedLocal.id,
+        { ...maskedLocal.transform, x: 8 }));
+      const maskedVacated = pixel(maskedMoved, 18, 32);
+      if (maskedVacated[3] !== 0 || pixel(maskedMoved, 4, 32)[3] === 0) {
+        throw new Error(type + " masked transform escaped selection");
+      }
+      samples.push({ type: type + "-owned-mask", alpha: pixel(maskedUnchanged, 32, 32)[3],
+        vacated: maskedVacated[3] });
+      for (const canvas of [maskedInitial, maskedUnchanged, maskedMoved]) { canvas.width = 1; canvas.height = 1; }
+    }
+    document.documentElement.dataset.result = "passed";
+    result.textContent = JSON.stringify({ status: "passed", samples });
+  } catch (error) {
+    document.documentElement.dataset.result = "failed";
+    result.textContent = String(error?.stack ?? error);
+  }
+</script>

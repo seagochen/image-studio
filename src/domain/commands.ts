@@ -1,7 +1,7 @@
 import { layerAncestors, layerIsEditable } from "./layerHierarchy";
 import { planLayerMerge } from "./layerMerge";
 import { adjacentMaskLayerIds } from "./adjustmentMasking";
-import { encodeSelectionRuns } from "./selectionMaskRuns";
+import { decodeSelectionRuns, encodeSelectionRuns } from "./selectionMaskRuns";
 import type { PixelSelectionMask } from "./pixelTools";
 import {
   cloneDocument,
@@ -99,6 +99,62 @@ export function addSelectionMaskedLocalLayer(
   return updateStructure(document, [...document.layers, layer, mask], { layerId: layer.id });
 }
 
+/** Splits existing vector content into complementary editable regions without rasterizing it. */
+export function liftSelectedVectorLayer(
+  document: ImageStudioDocument, sourceId: string, selection: PixelSelectionMask,
+): ImageStudioDocument {
+  const index = document.layers.findIndex((layer) => layer.id === sourceId);
+  const source = document.layers[index];
+  if (!source || (source.type !== "paint" && source.type !== "annotation") || !layerIsEditable(document.layers, sourceId)
+    || source.width !== selection.width || source.height !== selection.height
+    || !(source.type === "paint" ? (source as DrawingLayer).strokes.length : (source as AnnotationLayer).elements.length)) return document;
+  const runs = encodeSelectionRuns(selection);
+  const existingMask = source.rasterMaskId ? document.layers.find((layer) => layer.id === source.rasterMaskId) : undefined;
+  if (source.rasterMaskId && (!existingMask || existingMask.type !== "mask"
+    || existingMask.parentId !== source.parentId || existingMask.width !== source.width
+    || existingMask.height !== source.height)) return document;
+  if (existingMask?.type === "mask") {
+    const inherited = existingMask.clipRuns
+      ? decodeSelectionRuns(existingMask.clipRuns, source.width, source.height) : null;
+    const localPixels = new Uint8Array(selection.pixels.length);
+    const outsidePixels = new Uint8Array(selection.pixels.length);
+    let localCount = 0, outsideCount = 0;
+    for (let pixel = 0; pixel < selection.pixels.length; pixel += 1) {
+      const permitted = !inherited || Boolean(inherited[pixel]) !== (existingMask.clipInverted === true);
+      if (!permitted) continue;
+      if (selection.pixels[pixel]) { localPixels[pixel] = 1; localCount += 1; }
+      else { outsidePixels[pixel] = 1; outsideCount += 1; }
+    }
+    if (!localCount || !outsideCount) return document;
+    const outsideMask: DrawingLayer = { ...existingMask, clipRuns: encodeSelectionRuns({ ...selection, pixels: outsidePixels }),
+      clipInverted: undefined };
+    const localMask: DrawingLayer = { ...structuredClone(existingMask), id: createId("mask"),
+      name: `${source.name} selection mask`, clipRuns: encodeSelectionRuns({ ...selection, pixels: localPixels }),
+      clipInverted: undefined };
+    const local = { ...structuredClone(source), id: createId(source.type), name: `${source.name} selection`,
+      rasterMaskId: localMask.id };
+    const layers = document.layers.map((layer) => layer.id === existingMask.id ? outsideMask : layer);
+    layers.splice(Math.max(index, layers.findIndex((layer) => layer.id === existingMask.id)) + 1, 0, local, localMask);
+    return updateStructure(document, layers, { layerId: local.id });
+  }
+  const sourceMask: DrawingLayer = {
+    ...createDrawingLayer(document, "mask", `${source.name} outside selection`),
+    parentId: source.parentId, transform: { ...source.transform }, width: source.width, height: source.height,
+    opacity: 1, selectionRuns: runs,
+  };
+  const localMask: DrawingLayer = {
+    ...createDrawingLayer(document, "mask", `${source.name} selection`),
+    parentId: source.parentId, transform: { ...source.transform }, width: source.width, height: source.height,
+    opacity: 1, selectionRuns: [...runs],
+  };
+  const outside = { ...source, rasterMaskId: sourceMask.id, rasterMaskInverted: true };
+  const local = { ...structuredClone(source), id: createId(source.type), name: `${source.name} selection`,
+    rasterMaskId: localMask.id, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined };
+  const layers = [...document.layers];
+  layers.splice(index, 1, outside, sourceMask, local, localMask);
+  return updateStructure(document, layers, { layerId: local.id });
+}
+
 /** Freeze a temporary selection as the adjacent mask of a new adjustment layer. */
 export function addSelectionMaskedAdjustmentLayer(
   document: ImageStudioDocument, sourceId: string, selection: PixelSelectionMask, adjustment: ImageStudioLayer,
@@ -157,7 +213,11 @@ export function patchLayer(
 }
 
 export function setLayerTransform(document: ImageStudioDocument, layerId: string, transform: LayerTransform): ImageStudioDocument {
-  return patchLayer(document, layerId, { transform });
+  const owner = document.layers.find((layer) => layer.id === layerId);
+  if (!owner?.rasterMaskId) return patchLayer(document, layerId, { transform });
+  const layers = document.layers.map((layer) =>
+    layer.id === layerId || layer.id === owner.rasterMaskId ? { ...layer, transform: { ...transform } } : layer);
+  return updateStructure(document, layers);
 }
 
 export function selectLayer(document: ImageStudioDocument, layerId: string | null): ImageStudioDocument {
@@ -402,6 +462,7 @@ function updateStructure(document: ImageStudioDocument, layers: ImageStudioLayer
       || claimed.has(mask.id) || owned.has(mask.id)) return document;
     owned.add(mask.id);
   }
+  if (layers.some((layer) => layer.type === "mask" && layer.clipRuns && !owned.has(layer.id))) return document;
   return update(document, { layers, selection });
 }
 

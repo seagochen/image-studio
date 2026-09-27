@@ -19,7 +19,7 @@ import { applyConventionalEditorOutcome, type ConventionalEditorInput } from "..
 import { AiEditDialog } from "../ai/AiEditDialog";
 import {
   addLayer, addSelectionMaskedAdjustmentLayer, addStroke, attachPaintAsRasterMask, createAnnotationLayer, createAttachedRasterMask, createDrawingLayer, deleteLayer, duplicateLayer,
-  insertLayerAfter, moveLayer, patchLayer, replaceAdjacentLayers, replaceLastStroke, replaceRasterLayer, replaceRasterPixels,
+  insertLayerAfter, liftSelectedVectorLayer, moveLayer, patchLayer, replaceAdjacentLayers, replaceLastStroke, replaceRasterLayer, replaceRasterPixels,
   selectLayer, setLayerTransform, replaceAnnotationElement,
 } from "../domain/commands";
 import { clampPoint, screenToStage, stageToImage } from "../../../shared/canvas";
@@ -186,6 +186,23 @@ export function Studio(): JSX.Element {
   const compositePreview = useCompositePreview(document, requiresComposite, pixelPreviewVersion,
     directPixelCanvasRef.current && directPixelLayerIdRef.current ? new Map([[directPixelLayerIdRef.current, directPixelCanvasRef.current]]) : undefined,
     activePointerIdRef.current !== null, () => setError("editFailed"));
+  const liftVectorSelection = () => {
+    const snapshot = documentRef.current;
+    const sourceId = snapshot.selection.layerId;
+    if (!sourceId || pixelSelection?.layerId !== sourceId) return;
+    try {
+      const next = liftSelectedVectorLayer(snapshot, sourceId, pixelSelection);
+      if (next === snapshot || !historyRef.current.canRecord(snapshot, next)) throw new Error("Vector selection cannot be lifted");
+      commit((current) => current === snapshot ? next : current, "Lift selected vector content");
+      setPixelSelection(null);
+      setSelectedElementId(null);
+      setTool("select");
+    } catch { setError("editFailed"); }
+  };
+  const canLiftVectorSelection = Boolean(selected && selectedEditable
+    && (selected.type === "paint" && selected.strokes.length > 0
+      || selected.type === "annotation" && selected.elements.length > 0));
+
   const commitLayerTransform = (layerId: string, transform: ImageStudioLayer["transform"], mergeKey?: string) => {
     // A temporary pixel selection cannot authorize moving the whole source layer.
     if (pixelSelection?.layerId === layerId) return;
@@ -619,8 +636,9 @@ export function Studio(): JSX.Element {
               <span>{t("selectionReady")}</span>
               <button disabled={!selected || !selectedEditable || selectedRasterTooLarge || selected.type !== "raster" || selected.id !== pixelSelection.layerId}
                 onClick={clearPixelSelection}>{t("clearSelectedPixels")}</button>
-              <button disabled={!selected || selected.type !== "raster" || !selectedEditable || selectedRasterTooLarge || selected.id !== pixelSelection.layerId}
-                onClick={liftPixelSelection}>{t("liftSelectedPixels")}</button>
+              <button disabled={!selected || selected.id !== pixelSelection.layerId || (selected.type === "raster"
+                ? !selectedEditable || selectedRasterTooLarge : !canLiftVectorSelection)}
+                onClick={selected?.type === "raster" ? liftPixelSelection : liftVectorSelection}>{t("liftSelectedPixels")}</button>
               <button onClick={invertPixelSelection}>{t("invertSelection")}</button>
               <button onClick={() => setPixelSelection(null)}>{t("clearSelection")}</button>
             </div>}

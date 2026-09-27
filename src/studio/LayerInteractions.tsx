@@ -1,4 +1,5 @@
 import { AnnotationNode } from "./AnnotationNode";
+import { adjacentMaskLayerIds } from "../domain/adjustmentMasking";
 import { Group, Rect } from "react-konva";
 import type Konva from "konva";
 import type { ImageStudioLayer, LayerTransform } from "../domain/document";
@@ -15,7 +16,10 @@ interface Props {
 
 /** Invisible hit shapes preserve editing while the compositor owns every visible pixel. */
 export function LayerInteractions({ layers, parentId = null, selectable, blockedTransformLayerId, onSelect, onEdit, onTransform }: Props): JSX.Element {
-  return <>{layers.filter((layer) => (layer.parentId ?? null) === parentId && layer.visible).map((layer) => {
+  const consumedMasks = new Set(layers.flatMap((layer) => layer.rasterMaskId ? [layer.rasterMaskId]
+    : layer.type === "adjustment" ? adjacentMaskLayerIds(layers, layer) : []));
+  return <>{layers.filter((layer) => (layer.parentId ?? null) === parentId && layer.visible
+    && !(layer.type === "mask" && consumedMasks.has(layer.id))).map((layer) => {
     if (layer.type === "adjustment") return null;
     const enabled = selectable && !layer.locked;
     const transformable = layer.id !== blockedTransformLayerId;
