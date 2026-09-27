@@ -18,7 +18,7 @@ import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { applyConventionalEditorOutcome, type ConventionalEditorInput } from "../adapters/conventionalEditor";
 import { AiEditDialog } from "../ai/AiEditDialog";
 import {
-  addLayer, addStroke, attachPaintAsRasterMask, createAnnotationLayer, createAttachedRasterMask, createDrawingLayer, deleteLayer, duplicateLayer,
+  addLayer, addSelectionMaskedAdjustmentLayer, addStroke, attachPaintAsRasterMask, createAnnotationLayer, createAttachedRasterMask, createDrawingLayer, deleteLayer, duplicateLayer,
   insertLayerAfter, moveLayer, patchLayer, replaceAdjacentLayers, replaceLastStroke, replaceRasterLayer, replaceRasterPixels,
   selectLayer, setLayerTransform, replaceAnnotationElement,
 } from "../domain/commands";
@@ -41,6 +41,7 @@ import { PixelTileArchive } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
 import { resolveRasterEditCoverage } from "../domain/editCoverage";
 import { bindConfiguredShortcuts, loadShortcuts, SHORTCUT_ACTIONS, type ShortcutAction } from "../domain/shortcutSettings";
+import { encodeSelectionRuns } from "../domain/selectionMaskRuns";
 import { FileMenu, type DeliveryFormat } from "./FileMenu";
 import { clearPreviewTileCache, previewStorageStatus } from "./previewTiles";
 import { ShortcutSettingsDialog } from "./ShortcutSettingsDialog";
@@ -114,7 +115,7 @@ export function Studio(): JSX.Element {
   const [saveToast, setSaveToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
   const [shortcutBindings, setShortcutBindings] = useState(loadShortcuts);
-  const [adjustmentDraft, setAdjustmentDraft] = useState<{ layer: AdjustmentLayer; sourceLayerId: string | null } | null>(null);
+  const [adjustmentDraft, setAdjustmentDraft] = useState<{ layer: AdjustmentLayer; sourceLayerId: string | null; selection: PixelSelectionMask | null } | null>(null);
   const [, refreshHistory] = useState(0);
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -158,7 +159,7 @@ export function Studio(): JSX.Element {
   const canRecordPixelBytes = useCallback((bytes: number) => historyRef.current.canRecordPixelBytes(bytes), []);
 
   const editSelectedElement = (element: AnnotationElement, field: string) => {
-    if (!selected || selected.type !== "annotation" || !selectedEditable) return;
+    if (!selected || selected.type !== "annotation" || !selectedEditable || pixelSelection?.layerId === selected.id) return;
     commit((current) => replaceAnnotationElement(current, selected.id, element), "Edit annotation", `annotation:${selected.id}:${element.id}:${field}`);
     if (element.kind === "text" && field === "fill") setPaintColor(element.fill);
     else if (element.kind !== "text" && field === "stroke") setPaintColor(element.stroke);
@@ -184,15 +185,20 @@ export function Studio(): JSX.Element {
   const compositePreview = useCompositePreview(document, requiresComposite, pixelPreviewVersion,
     directPixelCanvasRef.current && directPixelLayerIdRef.current ? new Map([[directPixelLayerIdRef.current, directPixelCanvasRef.current]]) : undefined,
     activePointerIdRef.current !== null, () => setError("editFailed"));
+  const commitLayerTransform = (layerId: string, transform: ImageStudioLayer["transform"], mergeKey?: string) => {
+    // A temporary pixel selection cannot authorize moving the whole source layer.
+    if (pixelSelection?.layerId === layerId) return;
+    commit((current) => setLayerTransform(current, layerId, transform), "Transform layer", mergeKey);
+  };
 
   useEffect(() => {
     const transformer = transformerRef.current;
     const stage = stageRef.current;
     if (!transformer || !stage) return;
-    const node = selected && tool === "select" && !selected.locked ? stage.findOne(`#node-${selected.id}`) : null;
+    const node = selected && tool === "select" && !selected.locked && pixelSelection?.layerId !== selected.id ? stage.findOne(`#node-${selected.id}`) : null;
     transformer.nodes(node ? [node] : []);
     transformer.getLayer()?.batchDraw();
-  }, [selected, tool, document.layers, compositePreview]);
+  }, [selected, tool, document.layers, compositePreview, pixelSelection?.layerId]);
 
   const runHistory = useCallback((direction: "undo" | "redo") => {
     const current = documentRef.current;
@@ -217,11 +223,19 @@ export function Studio(): JSX.Element {
   const createAdjustmentForSelection = useCallback((kind: AdjustmentKind) => {
     const snapshot = documentRef.current;
     const sourceLayerId = snapshot.selection.layerId;
-    const parentId = snapshot.layers.find((layer) => layer.id === sourceLayerId)?.parentId ?? null;
+    const source = snapshot.layers.find((layer) => layer.id === sourceLayerId);
+    const selection = pixelSelection?.layerId === sourceLayerId ? pixelSelection : null;
+    if (selection && (!source || source.rasterMaskId || !layerIsEditable(snapshot.layers, source.id))) {
+      setError("editFailed"); return;
+    }
     const label = ADJUSTMENT_KIND_LABELS[locale][kind];
-    const layer = createAdjustmentLayer(snapshot, kind, label, parentId);
-    setAdjustmentDraft({ layer, sourceLayerId });
-  }, [locale]);
+    if (selection) {
+      try { encodeSelectionRuns(selection); }
+      catch { setError("editFailed"); return; }
+    }
+    const layer = createAdjustmentLayer(snapshot, kind, label, source?.parentId ?? null);
+    setAdjustmentDraft({ layer, sourceLayerId, selection });
+  }, [locale, pixelSelection]);
 
   const addMaskToSelectedLayer = useCallback(() => {
     if (!selected || selected.locked || selected.type === "mask" || selected.rasterMaskId) return;
@@ -470,22 +484,22 @@ export function Studio(): JSX.Element {
                         globalCompositeOperation={canvasBlendMode(layer.blendMode)}>
                         <KonvaImage image={directPixelCanvasRef.current} width={layer.width} height={layer.height} listening={false} />
                       </Group>
-                      : <RasterNode layer={layer} selectable={tool === "select"} onSelect={() => setDocument((current) => selectLayer(current, layer.id))}
-                        onTransform={(transform, mergeKey) => commit((current) => setLayerTransform(current, layer.id, transform), "Transform layer", mergeKey)} /> :
+                      : <RasterNode layer={layer} selectable={tool === "select"} transformable={pixelSelection?.layerId !== layer.id} onSelect={() => setDocument((current) => selectLayer(current, layer.id))}
+                        onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} /> :
                     layer.type === "annotation" ?
-                    <AnnotationNode layer={layer} selectable={tool === "select"} onSelect={(elementId) => selectObject(layer.id, elementId)}
+                    <AnnotationNode layer={layer} selectable={tool === "select"} transformable={pixelSelection?.layerId !== layer.id} onSelect={(elementId) => selectObject(layer.id, elementId)}
                       onEdit={(elementId) => selectObject(layer.id, elementId, true)}
-                      onTransform={(transform, mergeKey) => commit((current) => setLayerTransform(current, layer.id, transform), "Transform layer", mergeKey)} /> :
-                    <DrawingNode layer={layer} selectable={tool === "select"} onSelect={() => setDocument((current) => selectLayer(current, layer.id))}
-                      onTransform={(transform, mergeKey) => commit((current) => setLayerTransform(current, layer.id, transform), "Transform layer", mergeKey)} />}
-                  {layer.type !== "group" && layer.type !== "adjustment" && selected?.id === layer.id && tool === "select" && !layer.locked &&
+                      onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} /> :
+                    <DrawingNode layer={layer} selectable={tool === "select"} transformable={pixelSelection?.layerId !== layer.id} onSelect={() => setDocument((current) => selectLayer(current, layer.id))}
+                      onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} />}
+                  {layer.type !== "group" && layer.type !== "adjustment" && selected?.id === layer.id && tool === "select" && !layer.locked && pixelSelection?.layerId !== layer.id &&
                     <Transformer ref={transformerRef} rotateEnabled enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} />}
                 </Group>)}
               {requiresComposite && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}>
-                <Group clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}><LayerInteractions layers={document.layers} selectable={tool === "select"}
+                <Group clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}><LayerInteractions layers={document.layers} selectable={tool === "select"} blockedTransformLayerId={pixelSelection?.layerId}
                   onSelect={(id, elementId) => selectObject(id, elementId)} onEdit={(id, elementId) => selectObject(id, elementId, true)}
-                  onTransform={(id, transform, mergeKey) => commit((current) => setLayerTransform(current, id, transform), "Transform layer", mergeKey)} /></Group>
-                {selected && selected.type !== "adjustment" && selectedEditable && tool === "select" && <Transformer ref={transformerRef}
+                  onTransform={commitLayerTransform} /></Group>
+                {selected && selected.type !== "adjustment" && selectedEditable && tool === "select" && pixelSelection?.layerId !== selected.id && <Transformer ref={transformerRef}
                   rotateEnabled enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} />}
               </Group>}
               {draftAnnotation && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
@@ -599,7 +613,7 @@ export function Studio(): JSX.Element {
               {selected.elements.length > 1 && <label className="annotation-object-picker">{propertyLabels.element}<select value={selectedElement.id}
                 onChange={(event) => setSelectedElementId(event.target.value)}>{selected.elements.map((element, index) =>
                   <option key={element.id} value={element.id}>{index + 1}: {element.kind === "text" ? element.text.slice(0, 30) : toolLabels.shape}</option>)}</select></label>}
-              <AnnotationProperties key={`${selected.id}:${selectedElement.id}`} element={selectedElement} locale={locale} disabled={!selectedEditable}
+              <AnnotationProperties key={`${selected.id}:${selectedElement.id}`} element={selectedElement} locale={locale} disabled={!selectedEditable || pixelSelection?.layerId === selected.id}
                 focusRequest={textFocusRequest} onChange={editSelectedElement} />
             </>}
             {selected?.type === "adjustment" && <AdjustmentPanel layer={selected} locale={locale} histogram={previewHistogram}
@@ -626,13 +640,20 @@ export function Studio(): JSX.Element {
         if (outcome.kind === "saved") commit((current) => applyConventionalEditorOutcome(current, selected.id, outcome), "Correct perspective");
         setEditorInput(null);
       }} />}
-      {adjustmentDraft && <AdjustmentEditorDialog document={document} draft={adjustmentDraft.layer} sourceLayerId={adjustmentDraft.sourceLayerId} locale={locale}
+      {adjustmentDraft && <AdjustmentEditorDialog document={document} draft={adjustmentDraft.layer} sourceLayerId={adjustmentDraft.sourceLayerId} selection={adjustmentDraft.selection} locale={locale}
         onComplete={(outcome) => {
           setAdjustmentDraft(null);
           if (outcome.kind === "keep") {
-            commit((current) => addLayer(current, outcome.layer), "Add adjustment layer");
+            try {
+              commit((current) => adjustmentDraft.selection && adjustmentDraft.sourceLayerId
+                ? addSelectionMaskedAdjustmentLayer(current, adjustmentDraft.sourceLayerId, adjustmentDraft.selection, outcome.layer)
+                : addLayer(current, outcome.layer), "Add adjustment layer");
+            } catch {
+              setError("editFailed");
+              return;
+            }
             setInspectorTab("properties");
-          } else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId) {
+          } else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId && !adjustmentDraft.selection) {
             void bakeAdjustmentDraft(outcome.layer, adjustmentDraft.sourceLayerId);
             setInspectorTab("properties");
           }

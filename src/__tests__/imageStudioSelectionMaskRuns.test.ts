@@ -1,4 +1,6 @@
-import { addSelectionMaskedLocalLayer, addLayer, createDrawingLayer, duplicateLayer } from "../domain/commands";
+import { addSelectionMaskedAdjustmentLayer, addSelectionMaskedLocalLayer, addLayer, createDrawingLayer, duplicateLayer } from "../domain/commands";
+import { createAdjustmentLayer } from "../domain/adjustmentEngine";
+import { adjacentMaskLayerIds } from "../domain/adjustmentMasking";
 import { createEmptyDocument, parseDocument, serializeDocument } from "../domain/document";
 import { encodeSelectionRuns, paintSelectionRuns } from "../domain/selectionMaskRuns";
 import { DocumentHistory } from "../domain/history";
@@ -57,5 +59,32 @@ describe("Image Studio selection-derived local masks", () => {
     expect(addSelectionMaskedLocalLayer(document, source.id, { width: 2, height: 1, pixels: new Uint8Array([1, 1]) },
       { type: "paint", name: "Local", stroke })).toBe(document);
     expect(() => encodeSelectionRuns({ width: 100_001, height: 1, pixels: Uint8Array.from({ length: 100_001 }, (_, index) => index % 2) })).toThrow("too complex");
+  });
+  it("keeps a selected adjustment and its adjacent mask together through save and undo", async () => {
+    const initial = { ...createEmptyDocument(), canvas: { width: 3, height: 2 } };
+    const source = { ...createDrawingLayer(initial, "paint", "Source"), transform: { x: 7, y: 4, scaleX: 1, scaleY: 1, rotation: 0 } };
+    const document = addLayer(initial, source);
+    const adjustment = createAdjustmentLayer(document, "exposure", "Selected exposure");
+    const selection = { width: 3, height: 2, pixels: new Uint8Array([0, 1, 1, 0, 0, 1]) };
+    const history = new DocumentHistory();
+    const next = history.execute(document, addSelectionMaskedAdjustmentLayer(document, source.id, selection, adjustment), "Add selected adjustment");
+    expect(next.layers).toHaveLength(3);
+    expect(next.selection.layerId).toBe(adjustment.id);
+    expect(adjacentMaskLayerIds(next.layers, adjustment)).toEqual([next.layers[2].id]);
+    expect(next.layers[2]).toMatchObject({ type: "mask", selectionRuns: [1, 2, 2, 1], transform: source.transform });
+    expect(parseDocument(serializeDocument(next)).layers[2]).toMatchObject({ selectionRuns: [1, 2, 2, 1] });
+    expect((await history.undo(next)).layers).toEqual(document.layers);
+    expect((await history.redo(document)).layers).toEqual(next.layers);
+  });
+
+  it("rejects a selected adjustment when its source mask or dimensions cannot be preserved", () => {
+    const initial = { ...createEmptyDocument(), canvas: { width: 2, height: 1 } };
+    const source = createDrawingLayer(initial, "paint", "Source");
+    const document = addLayer(initial, source);
+    const adjustment = createAdjustmentLayer(document, "exposure", "Exposure");
+    const selection = { width: 2, height: 1, pixels: new Uint8Array([1, 0]) };
+    expect(addSelectionMaskedAdjustmentLayer(document, source.id, { ...selection, width: 1 }, adjustment)).toBe(document);
+    const maskedDocument = { ...document, layers: [{ ...source, rasterMaskId: "existing" }] };
+    expect(addSelectionMaskedAdjustmentLayer(maskedDocument, source.id, selection, adjustment)).toBe(maskedDocument);
   });
 });

@@ -99,6 +99,22 @@ export function addSelectionMaskedLocalLayer(
   return updateStructure(document, [...document.layers, layer, mask], { layerId: layer.id });
 }
 
+/** Freeze a temporary selection as the adjacent mask of a new adjustment layer. */
+export function addSelectionMaskedAdjustmentLayer(
+  document: ImageStudioDocument, sourceId: string, selection: PixelSelectionMask, adjustment: ImageStudioLayer,
+): ImageStudioDocument {
+  const source = document.layers.find((layer) => layer.id === sourceId);
+  if (!source || !["raster", "paint", "annotation"].includes(source.type) || !layerIsEditable(document.layers, sourceId)
+    || source.rasterMaskId || adjustment.type !== "adjustment" || (adjustment.parentId ?? null) !== (source.parentId ?? null)
+    || source.width !== selection.width || source.height !== selection.height) return document;
+  const runs = encodeSelectionRuns(selection);
+  const mask: DrawingLayer = {
+    ...createDrawingLayer(document, "mask", `${adjustment.name} selection`), parentId: source.parentId,
+    transform: { ...source.transform }, width: source.width, height: source.height, opacity: 1, selectionRuns: runs,
+  };
+  return updateStructure(document, [...document.layers, adjustment, mask], { layerId: adjustment.id });
+}
+
 export function createGroupLayer(document: ImageStudioDocument, name: string, parentId: string | null = null): GroupLayer {
   return {
     id: createId("group"), type: "group", name, visible: true, locked: false, opacity: 1, blendMode: "normal",

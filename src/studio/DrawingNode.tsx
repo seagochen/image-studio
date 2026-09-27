@@ -7,17 +7,18 @@ interface Props {
   layer: DrawingLayer;
   selectable: boolean;
   onSelect: () => void;
+  transformable?: boolean;
   onTransform: (transform: DrawingLayer["transform"], mergeKey?: string) => void;
 }
 
-export function DrawingNode({ layer, selectable, onSelect, onTransform }: Props): JSX.Element {
+export function DrawingNode({ layer, selectable, transformable = true, onSelect, onTransform }: Props): JSX.Element {
   const commit = (node: Konva.Group, mergeKey?: string) => onTransform({
     x: node.x(), y: node.y(), scaleX: node.scaleX(), scaleY: node.scaleY(), rotation: node.rotation(),
   }, mergeKey);
   return (
     <Group id={`node-${layer.id}`} x={layer.transform.x} y={layer.transform.y}
       scaleX={layer.transform.scaleX} scaleY={layer.transform.scaleY} rotation={layer.transform.rotation}
-      visible={layer.visible} opacity={layer.opacity} globalCompositeOperation={canvasBlendMode(layer.blendMode)} draggable={selectable && !layer.locked}
+      visible={layer.visible} opacity={layer.opacity} globalCompositeOperation={canvasBlendMode(layer.blendMode)} draggable={selectable && transformable && !layer.locked}
       onClick={onSelect} onTap={onSelect}
       onDragEnd={(event) => commit(event.target as Konva.Group, `drag:${layer.id}`)}
       onTransformEnd={(event) => commit(event.target as Konva.Group, `transform:${layer.id}`)}>

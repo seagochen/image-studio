@@ -6,19 +6,20 @@ interface Props {
   layer: AnnotationLayer;
   selectable: boolean;
   onSelect: (elementId?: string) => void;
+  transformable?: boolean;
   onEdit?: (elementId: string) => void;
   hitOnly?: boolean;
   onTransform: (transform: AnnotationLayer["transform"], mergeKey?: string) => void;
 }
 
-export function AnnotationNode({ layer, selectable, onSelect, onEdit, hitOnly, onTransform }: Props): JSX.Element {
+export function AnnotationNode({ layer, selectable, transformable = true, onSelect, onEdit, hitOnly, onTransform }: Props): JSX.Element {
   const commit = (node: Konva.Group, mergeKey?: string) => onTransform({
     x: node.x(), y: node.y(), scaleX: node.scaleX(), scaleY: node.scaleY(), rotation: node.rotation(),
   }, mergeKey);
   return (
     <Group id={`node-${layer.id}`} x={layer.transform.x} y={layer.transform.y}
       scaleX={layer.transform.scaleX} scaleY={layer.transform.scaleY} rotation={layer.transform.rotation}
-      visible={layer.visible} opacity={hitOnly ? 0 : layer.opacity} globalCompositeOperation={canvasBlendMode(layer.blendMode)} draggable={selectable && !layer.locked}
+      visible={layer.visible} opacity={hitOnly ? 0 : layer.opacity} globalCompositeOperation={canvasBlendMode(layer.blendMode)} draggable={selectable && transformable && !layer.locked}
 
       onDragEnd={(event) => commit(event.target as Konva.Group, `drag:${layer.id}`)}
       onTransformEnd={(event) => commit(event.target as Konva.Group, `transform:${layer.id}`)}>

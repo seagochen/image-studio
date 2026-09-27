@@ -7,10 +7,11 @@ interface Props {
   layer: RasterLayer;
   selectable: boolean;
   onSelect: () => void;
+  transformable?: boolean;
   onTransform: (transform: RasterLayer["transform"], mergeKey?: string) => void;
 }
 
-export function RasterNode({ layer, selectable, onSelect, onTransform }: Props): JSX.Element {
+export function RasterNode({ layer, selectable, transformable = true, onSelect, onTransform }: Props): JSX.Element {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   useEffect(() => {
     const element = new window.Image();
@@ -26,7 +27,7 @@ export function RasterNode({ layer, selectable, onSelect, onTransform }: Props):
   return (
     <Group id={`node-${layer.id}`} x={layer.transform.x} y={layer.transform.y}
       scaleX={layer.transform.scaleX} scaleY={layer.transform.scaleY} rotation={layer.transform.rotation}
-      visible={layer.visible} opacity={layer.opacity} globalCompositeOperation={canvasBlendMode(layer.blendMode)} draggable={selectable && !layer.locked}
+      visible={layer.visible} opacity={layer.opacity} globalCompositeOperation={canvasBlendMode(layer.blendMode)} draggable={selectable && transformable && !layer.locked}
       onClick={onSelect} onTap={onSelect}
       onDragEnd={(event) => commit(event.target as Konva.Group, `drag:${layer.id}`)}
       onTransformEnd={(event) => commit(event.target as Konva.Group, `transform:${layer.id}`)}>

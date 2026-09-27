@@ -17,7 +17,7 @@ describe("Image Studio adjustment layer entry", () => {
     expect(layerPanel).toContain("onSelect={props.onCreateAdjustment}");
     expect(studio).toContain("onCreateAdjustment={createAdjustmentForSelection}");
     expect(menu).toContain("ADJUSTMENT_KINDS.map");
-    expect(studio).toContain("setAdjustmentDraft({ layer, sourceLayerId })");
+    expect(studio).toContain("setAdjustmentDraft({ layer, sourceLayerId, selection })");
     expect(studio).not.toContain('createAdjustmentLayer(current, "exposure", t("adjustLayer")');
     expect(rasterDialog).toContain('type EditorMode = "adjust" | "filters"');
     expect(rasterDialog).toContain('["finetune", "adjust", t.finetune]');
@@ -70,8 +70,9 @@ describe("Image Studio adjustment layer entry", () => {
 
   it("keeps or bakes the draft only once the dialog resolves, never mutating the document mid-edit", () => {
     expect(studio).toContain('if (outcome.kind === "keep") {');
-    expect(studio).toContain("commit((current) => addLayer(current, outcome.layer), \"Add adjustment layer\")");
-    expect(studio).toContain('else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId)');
+    expect(studio).toContain("addSelectionMaskedAdjustmentLayer(current, adjustmentDraft.sourceLayerId, adjustmentDraft.selection, outcome.layer)");
+    expect(dialog).toContain("addSelectionMaskedAdjustmentLayer(baseDocument, sourceLayerId, selection, layer)");
+    expect(studio).toContain('else if (outcome.kind === "bake" && adjustmentDraft.sourceLayerId && !adjustmentDraft.selection)');
     expect(studio).toContain("const bakeAdjustmentDraft = async (layer: AdjustmentLayer, sourceLayerId: string) => {");
   });
 
