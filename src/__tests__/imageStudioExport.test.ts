@@ -6,7 +6,7 @@ import { exportFilename, exportImage, planExport, renderImageStudioDocument } fr
 describe("Image Studio export", () => {
   it("plans exact output dimensions and rejects unsafe memory use", () => {
     expect(planExport({ format: "png", width: 2000, height: 1000, quality: 1, jpegBackground: "#ffffff" }))
-      .toMatchObject({ mimeType: "image/png", estimatedBytes: 16_000_000, memoryRisk: false });
+      .toMatchObject({ mimeType: "image/png", estimatedBytes: 24_000_000, memoryRisk: false });
     expect(() => planExport({ format: "webp", width: 10_000, height: 10_000, quality: .9, jpegBackground: "#ffffff" }))
       .toThrow("memory budget");
   });
@@ -17,7 +17,7 @@ describe("Image Studio export", () => {
     const document = { ...createEmptyDocument(), canvas: { width: 4096, height: 4096 }, layers: [raster] };
     const options = { format: "png" as const, width: 4096, height: 4096, quality: 1, jpegBackground: "#ffffff" };
     expect(planExport(options, document).estimatedBytes).toBe(4096 * 4096 * 12);
-    expect(() => planExport({ ...options, format: "jpeg" }, document)).toThrow("memory budget");
+    expect(planExport({ ...options, format: "jpeg" }, document).estimatedBytes).toBe(options.width * options.height * 12);
   });
 
   it("keeps alpha for PNG and fills the selected background for JPEG", async () => {

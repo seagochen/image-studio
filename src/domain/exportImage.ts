@@ -1,9 +1,12 @@
-import { canvasBlendMode, rasterSourceUrl, type AnnotationLayer, type DrawingLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer } from "./document";
-import { decodeSelectionRuns, paintSelectionRuns } from "./selectionMaskRuns";
-import { createBrushDabs, renderBrushDabs } from "./brushEngine";
+import { canvasBlendMode, rasterSourceUrl, type DrawingLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer } from "./document";
+import { applyRasterMask } from "./rasterMaskRenderer";
+import { renderDrawingLayer, renderAnnotationLayer } from "./layerRasterization";
+export { renderDrawingLayer } from "./layerRasterization";
 import { adjustmentKernel, ADJUSTMENT_CHUNK_PIXELS, applySpatialAdjustment, isSpatialAdjustment, spatialRadius, yieldRenderTask } from "./adjustmentEngine";
 import { adjacentMaskLayerIds } from "./adjustmentMasking";
 import { MAX_CANVAS_EDGE } from "../../../../frontend/src/shared/imageStudioDomain";
+import { RenderMemoryBudget, releaseRenderCanvas, reserveRenderBytes, type RenderMemoryUsage } from "./renderMemory";
+import { estimateRenderPeak, MASK_CHUNK_PIXELS, SPATIAL_WORK_BYTES_PER_PIXEL } from "./exportMemoryPlan";
 
 export type ExportFormat = "png" | "jpeg" | "webp";
 
@@ -35,13 +38,9 @@ export function planExport(options: ExportOptions, document?: ImageStudioDocumen
   }
   if (!/^#[0-9a-f]{6}$/i.test(options.jpegBackground)) throw new Error("Invalid JPEG background");
   const outputPixels = options.width * options.height;
-  const largestDecodedLayer = document?.layers.reduce((largest, layer) => Math.max(largest, layer.width * layer.height), 0) ?? 0;
-  const documentPixels = document ? document.canvas.width * document.canvas.height : 0;
-  const groupBuffers = document ? 1 + maximumGroupDepth(document.layers) : 0;
-  const directEncode = document && canEncodeCompositeDirectly(document, options);
-  // Direct encoding avoids a second output canvas, but still reserves encoder scratch space.
-  const estimatedBytes = directEncode ? outputPixels * 8 + largestDecodedLayer * 4
-    : outputPixels * 8 + largestDecodedLayer * 4 + documentPixels * (groupBuffers + 2) * 4;
+  // Rendering and encoding are sequential; encoder allowance includes a pixel copy and output.
+  const estimatedBytes = Math.max(outputPixels * 12, document ? estimateRenderPeak(document) : 0,
+    document && !canEncodeCompositeDirectly(document, options) ? document.canvas.width * document.canvas.height * 4 + outputPixels * 4 : 0);
   if (estimatedBytes > EXPORT_MEMORY_LIMIT_BYTES) throw new Error("Export exceeds the browser memory budget");
   return {
     mimeType: options.format === "png" ? "image/png" : options.format === "jpeg" ? "image/jpeg" : "image/webp",
@@ -51,8 +50,7 @@ export function planExport(options: ExportOptions, document?: ImageStudioDocumen
 }
 
 function canEncodeCompositeDirectly(document: ImageStudioDocument, options: ExportOptions): boolean {
-  return options.format !== "jpeg" && options.width === document.canvas.width && options.height === document.canvas.height
-    && document.layers.every((layer) => layer.type !== "group" && layer.type !== "adjustment" && !layer.rasterMaskId);
+  return options.width === document.canvas.width && options.height === document.canvas.height;
 }
 
 export function maximumGroupDepth(layers: ImageStudioLayer[]): number {
@@ -77,29 +75,40 @@ export async function exportImage(
     createCanvas?: (width: number, height: number) => HTMLCanvasElement;
     loadImage?: (source: RasterLayer["source"], signal?: AbortSignal) => Promise<CanvasImageSource>;
     signal?: AbortSignal;
+    onMemoryUsage?: (usage: RenderMemoryUsage) => void;
   } = {},
 ): Promise<Blob> {
   const plan = planExport(options, document);
-  const createCanvas = dependencies.createCanvas ?? browserCanvas;
-  const composite = await renderImageStudioDocument(document, dependencies);
+  const budget = new RenderMemoryBudget(EXPORT_MEMORY_LIMIT_BYTES, dependencies.onMemoryUsage);
+  const createCanvas = budget.canvasFactory(dependencies.createCanvas ?? browserCanvas);
+  let composite: HTMLCanvasElement | undefined;
   try {
-    if (canEncodeCompositeDirectly(document, options)) {
-      dependencies.signal?.throwIfAborted();
-      return await canvasBlob(composite, plan.mimeType, options.format === "png" ? undefined : options.quality);
-    }
-    const canvas = createCanvas(options.width, options.height);
-    try {
+    composite = await renderImageStudioDocument(document, { ...dependencies, createCanvas, memoryBudget: budget });
+    let canvas = composite;
+    if (!canEncodeCompositeDirectly(document, options)) {
+      canvas = createCanvas(options.width, options.height);
       const context = canvas.getContext("2d");
       if (!context) throw new Error("Canvas export is unavailable");
-      if (options.format === "jpeg") {
+      context.drawImage(composite, 0, 0, options.width, options.height);
+      releaseRenderCanvas(composite);
+      composite = undefined;
+    }
+    if (options.format === "jpeg") {
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas export is unavailable");
+      context.save();
+      try {
+        context.globalCompositeOperation = "destination-over";
         context.fillStyle = options.jpegBackground;
         context.fillRect(0, 0, options.width, options.height);
-      }
-      context.drawImage(composite, 0, 0, options.width, options.height);
-      dependencies.signal?.throwIfAborted();
-      return await canvasBlob(canvas, plan.mimeType, options.format === "png" ? undefined : options.quality);
-    } finally { canvas.width = 1; canvas.height = 1; }
-  } finally { composite.width = 1; composite.height = 1; }
+      } finally { context.restore(); }
+    }
+    await yieldRenderTask(dependencies.signal);
+    const releaseEncoding = budget.reserve(options.width * options.height * 8);
+    try {
+      return await canvasBlob(canvas, plan.mimeType, options.format === "png" ? undefined : options.quality, dependencies.signal);
+    } finally { releaseEncoding(); }
+  } finally { budget.dispose(); }
 }
 
 export interface RenderDependencies {
@@ -108,6 +117,7 @@ export interface RenderDependencies {
   signal?: AbortSignal;
   scale?: number;
   rasterOverrides?: ReadonlyMap<string, HTMLCanvasElement>;
+  memoryBudget?: RenderMemoryBudget;
 }
 
 export const PREVIEW_MAX_PIXELS = 1_000_000;
@@ -128,7 +138,7 @@ export async function renderImageStudioDocument(document: ImageStudioDocument, d
   const sizedCanvas = (width: number, height: number) => createCanvas(Math.max(1, Math.ceil(width * scale)), Math.max(1, Math.ceil(height * scale)));
   const canvas = sizedCanvas(document.canvas.width, document.canvas.height);
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas export is unavailable");
+  if (!context) { releaseRenderCanvas(canvas); throw new Error("Canvas export is unavailable"); }
   context.scale(scale, scale);
   // A mask's own visibility as ordinary content depends on whether some adjustment layer
   // claims it (Issue #171: claimed by position, not a stored reference). This depends only on
@@ -142,7 +152,7 @@ export async function renderImageStudioDocument(document: ImageStudioDocument, d
     dependencies.signal?.throwIfAborted();
     return canvas;
   } catch (error) {
-    canvas.width = 1; canvas.height = 1;
+    releaseRenderCanvas(canvas);
     throw error;
   }
 }
@@ -160,7 +170,7 @@ async function renderLayerStack(
     if (layer.type === "adjustment") {
       const width = Math.max(1, Math.ceil(document.canvas.width * scale));
       const height = Math.max(1, Math.ceil(document.canvas.height * scale));
-      const mask = await renderCombinedAdjustmentMask(document, adjacentMaskLayerIds(document.layers, layer), createCanvas, scale, signal);
+      const mask = await renderCombinedAdjustmentMask(document, adjacentMaskLayerIds(document.layers, layer), createCanvas, scale, signal, dependencies.memoryBudget);
       try {
         if (isSpatialAdjustment(layer.adjustment.kind)) {
           const adjustment = scaledSpatialAdjustment(layer.adjustment, scale);
@@ -168,21 +178,24 @@ async function renderLayerStack(
           const rows = Math.max(24, Math.floor(ADJUSTMENT_CHUNK_PIXELS / width));
           const maskContext = mask?.getContext("2d");
           const source = createCanvas(document.canvas.width, document.canvas.height);
-          const sourceContext = source.getContext("2d");
-          if (!sourceContext) throw new Error("Canvas export is unavailable");
-          sourceContext.drawImage(context.canvas, 0, 0);
           try {
+            const sourceContext = source.getContext("2d");
+            if (!sourceContext) throw new Error("Canvas export is unavailable");
+            sourceContext.drawImage(context.canvas, 0, 0);
             for (let y = 0; y < height; y += rows) {
               await yieldRenderTask(signal);
               const chunkHeight = Math.min(rows, height - y);
               const readY = Math.max(0, y - halo);
               const readEnd = Math.min(height, y + chunkHeight + halo);
-              const image = sourceContext.getImageData(0, readY, width, readEnd - readY);
-              const maskData = maskContext?.getImageData(0, readY, width, readEnd - readY).data;
-              image.data.set(applySpatialAdjustment(image.data, width, image.height, adjustment, layer.opacity, maskData, layer.blendMode));
-              context.putImageData(image, 0, readY, 0, y - readY, width, chunkHeight);
+              const releaseChunk = reserveRenderBytes(dependencies.memoryBudget, width * (readEnd - readY) * SPATIAL_WORK_BYTES_PER_PIXEL);
+              try {
+                const image = sourceContext.getImageData(0, readY, width, readEnd - readY);
+                const maskData = maskContext?.getImageData(0, readY, width, readEnd - readY).data;
+                image.data.set(applySpatialAdjustment(image.data, width, image.height, adjustment, layer.opacity, maskData, layer.blendMode));
+                context.putImageData(image, 0, readY, 0, y - readY, width, chunkHeight);
+              } finally { releaseChunk(); }
             }
-          } finally { source.width = 1; source.height = 1; }
+          } finally { releaseRenderCanvas(source); }
           continue;
         }
         const kernel = adjustmentKernel(layer.adjustment, layer.opacity, layer.blendMode);
@@ -190,27 +203,30 @@ async function renderLayerStack(
         for (let y = 0; y < height; y += rows) {
           await yieldRenderTask(signal);
           const chunkHeight = Math.min(rows, height - y);
-          const image = context.getImageData(0, y, width, chunkHeight);
-          kernel(image.data, mask?.getContext("2d")?.getImageData(0, y, width, chunkHeight).data);
-          context.putImageData(image, 0, y);
+          const releaseChunk = reserveRenderBytes(dependencies.memoryBudget, width * chunkHeight * (mask ? 8 : 4));
+          try {
+            const image = context.getImageData(0, y, width, chunkHeight);
+            kernel(image.data, mask?.getContext("2d")?.getImageData(0, y, width, chunkHeight).data);
+            context.putImageData(image, 0, y);
+          } finally { releaseChunk(); }
         }
       } finally {
-        if (mask) { mask.width = 1; mask.height = 1; }
+        if (mask) releaseRenderCanvas(mask);
       }
       continue;
     }
     if (layer.type === "group") {
       const groupCanvas = createCanvas(document.canvas.width, document.canvas.height);
-      const groupContext = groupCanvas.getContext("2d");
-      if (!groupContext) throw new Error("Canvas export is unavailable");
-      groupContext.scale(scale, scale);
       try {
+        const groupContext = groupCanvas.getContext("2d");
+        if (!groupContext) throw new Error("Canvas export is unavailable");
+        groupContext.scale(scale, scale);
         await renderLayerStack(document, layer.id, groupContext, createCanvas, dependencies, scale, consumedMaskIds);
         const mask = rasterMaskFor(document, layer);
-        if (mask) applyRasterMask(groupCanvas, mask.layer, createCanvas, scale, mask.inverted, mask.featherPx);
+        if (mask) await applyRasterMask(groupCanvas, mask.layer, createCanvas, scale, mask.inverted, mask.featherPx, dependencies);
         context.save(); applyLayerComposition(context, layer);
         context.drawImage(groupCanvas, 0, 0, document.canvas.width, document.canvas.height); context.restore();
-      } finally { groupCanvas.width = 1; groupCanvas.height = 1; }
+      } finally { releaseRenderCanvas(groupCanvas); }
       continue;
     }
     await renderSingleLayer(layer, context, createCanvas, dependencies, scale, rasterMaskFor(document, layer));
@@ -231,30 +247,38 @@ async function renderSingleLayer(
   let ownedBitmap: ImageBitmap | undefined;
   let scratch: HTMLCanvasElement | undefined;
   let masked: HTMLCanvasElement | undefined;
-  if (layer.type === "raster") {
-    if (override) image = override;
-    else if (dependencies.loadImage) image = await dependencies.loadImage(layer.source, dependencies.signal);
-    else {
-      const response = await fetch(rasterSourceUrl(layer.source), { signal: dependencies.signal });
-      if (!response.ok) throw new Error("Image export source unavailable");
-      ownedBitmap = await createImageBitmap(await response.blob(), {
-        resizeWidth: Math.max(1, Math.ceil(layer.width * scale)), resizeHeight: Math.max(1, Math.ceil(layer.height * scale)),
-      });
-      image = ownedBitmap;
-    }
-  } else {
-    scratch = layer.type === "annotation" ? renderAnnotationLayer(layer, createCanvas, scale) : renderDrawingLayer(layer, createCanvas, scale);
-    image = scratch;
-  }
+  let releaseImage = () => {};
   try {
-    dependencies.signal?.throwIfAborted();
+    if (layer.type === "raster") {
+      releaseImage = reserveRenderBytes(dependencies.memoryBudget,
+        Math.max(1, Math.ceil(layer.width * scale)) * Math.max(1, Math.ceil(layer.height * scale)) * 4);
+      if (override) image = override;
+      else if (dependencies.loadImage) image = await dependencies.loadImage(layer.source, dependencies.signal);
+      else {
+        const response = await fetch(rasterSourceUrl(layer.source), { signal: dependencies.signal });
+        if (!response.ok) throw new Error("Image export source unavailable");
+        const blob = await response.blob();
+        const releaseInput = reserveRenderBytes(dependencies.memoryBudget, blob.size);
+        try {
+          dependencies.signal?.throwIfAborted();
+          ownedBitmap = await createImageBitmap(blob, {
+            resizeWidth: Math.max(1, Math.ceil(layer.width * scale)), resizeHeight: Math.max(1, Math.ceil(layer.height * scale)),
+          });
+          image = ownedBitmap;
+        } finally { releaseInput(); }
+      }
+    } else {
+      scratch = layer.type === "annotation" ? renderAnnotationLayer(layer, createCanvas, scale) : renderDrawingLayer(layer, createCanvas, scale);
+      image = scratch;
+    }
+    await yieldRenderTask(dependencies.signal);
     if (rasterMask) {
       masked = createCanvas(layer.width, layer.height);
       const maskedContext = masked.getContext("2d");
       if (!maskedContext) throw new Error("Canvas export is unavailable");
       maskedContext.scale(scale, scale);
       maskedContext.drawImage(image, 0, 0, layer.width, layer.height);
-      applyRasterMask(masked, rasterMask.layer, createCanvas, scale, rasterMask.inverted, rasterMask.featherPx);
+      await applyRasterMask(masked, rasterMask.layer, createCanvas, scale, rasterMask.inverted, rasterMask.featherPx, dependencies);
       image = masked;
     }
     context.save(); applyLayerComposition(context, layer);
@@ -262,8 +286,9 @@ async function renderSingleLayer(
     context.restore();
   } finally {
     ownedBitmap?.close();
-    if (scratch) { scratch.width = 1; scratch.height = 1; }
-    if (masked) { masked.width = 1; masked.height = 1; }
+    releaseImage();
+    if (scratch) releaseRenderCanvas(scratch);
+    if (masked) releaseRenderCanvas(masked);
   }
 }
 
@@ -277,55 +302,6 @@ function rasterMaskFor(document: ImageStudioDocument, layer: ImageStudioLayer): 
   return { layer: mask, inverted: layer.rasterMaskInverted === true, featherPx: layer.rasterMaskFeatherPx ?? 0 };
 }
 
-/** Applies grayscale×alpha mask weight, not merely its alpha channel. */
-function applyRasterMask(
-  target: HTMLCanvasElement, mask: DrawingLayer,
-  createCanvas: (width: number, height: number) => HTMLCanvasElement, scale: number, inverted = false, featherPx = 0,
-): void {
-  let maskCanvas = renderDrawingLayer(mask, createCanvas, scale);
-  if (featherPx > 0) {
-    const padding = Math.ceil(featherPx * scale * 3);
-    const blurred = createCanvas(maskCanvas.width + padding * 2, maskCanvas.height + padding * 2);
-    const blurredContext = blurred.getContext("2d");
-    if (!blurredContext) throw new Error("Raster mask canvas is unavailable");
-    blurredContext.filter = `blur(${featherPx * scale}px)`;
-    blurredContext.drawImage(maskCanvas, padding, padding);
-    maskCanvas.width = 1; maskCanvas.height = 1;
-    maskCanvas = blurred;
-  }
-  const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true });
-  const targetContext = target.getContext("2d");
-  if (!maskContext || !targetContext) { maskCanvas.width = 1; maskCanvas.height = 1; throw new Error("Raster mask canvas is unavailable"); }
-  const image = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-  for (let index = 0; index < image.data.length; index += 4) {
-    const weight = image.data[index + 3] / 255 * (image.data[index] + image.data[index + 1] + image.data[index + 2]) / 765;
-    const output = inverted ? 1 - weight : weight;
-    image.data[index] = 255; image.data[index + 1] = 255; image.data[index + 2] = 255; image.data[index + 3] = Math.round(output * 255);
-  }
-  const padding = featherPx > 0 ? Math.ceil(featherPx * scale * 3) : 0;
-  if (mask.clipRuns) {
-    const clip = decodeSelectionRuns(mask.clipRuns, mask.width, mask.height);
-    const contentWidth = maskCanvas.width - padding * 2;
-    const contentHeight = maskCanvas.height - padding * 2;
-    for (let y = 0; y < contentHeight; y += 1) for (let x = 0; x < contentWidth; x += 1) {
-      const sourceX = Math.min(mask.width - 1, Math.floor(x * mask.width / contentWidth));
-      const sourceY = Math.min(mask.height - 1, Math.floor(y * mask.height / contentHeight));
-      const selected = clip[sourceY * mask.width + sourceX] !== 0;
-      if (selected === (mask.clipInverted === true)) {
-        image.data[((y + padding) * maskCanvas.width + x + padding) * 4 + 3] = 0;
-      }
-    }
-  }
-  maskContext.putImageData(image, 0, 0);
-  targetContext.save();
-  // The destination may be a group or layer scratch canvas whose logical drawing
-  // context is already scaled. Both bitmaps are physical-pixel buffers here.
-  targetContext.setTransform(1, 0, 0, 1, 0, 0);
-  targetContext.globalCompositeOperation = "destination-in";
-  targetContext.drawImage(maskCanvas, padding, padding, maskCanvas.width - padding * 2, maskCanvas.height - padding * 2, 0, 0, target.width, target.height);
-  targetContext.restore();
-  maskCanvas.width = 1; maskCanvas.height = 1;
-}
 
 function applyLayerComposition(context: CanvasRenderingContext2D, layer: ImageStudioLayer): void {
   context.globalAlpha = layer.opacity;
@@ -333,11 +309,13 @@ function applyLayerComposition(context: CanvasRenderingContext2D, layer: ImageSt
   applyTransform(context, layer.transform);
 }
 
-function renderAdjustmentMask(
+async function renderAdjustmentMask(
   document: ImageStudioDocument,
   layerId: string,
   createCanvas: (width: number, height: number) => HTMLCanvasElement, scale: number,
-): HTMLCanvasElement | undefined {
+  signal?: AbortSignal, memoryBudget?: RenderMemoryBudget,
+): Promise<HTMLCanvasElement | undefined> {
+  await yieldRenderTask(signal);
   const layer = document.layers.find((candidate) => candidate.id === layerId);
   if (!layer || layer.type !== "mask") return undefined;
   const canvas = createCanvas(document.canvas.width, document.canvas.height);
@@ -356,16 +334,16 @@ function renderAdjustmentMask(
         if (!drawingContext) throw new Error("Adjustment mask canvas is unavailable");
         drawingContext.fillStyle = "#fff";
         drawingContext.fillRect(0, 0, drawing.width, drawing.height);
-        applyRasterMask(drawing, layer, createCanvas, scale, layer.adjustmentMaskInverted, layer.adjustmentMaskFeatherPx);
+        await applyRasterMask(drawing, layer, createCanvas, scale, layer.adjustmentMaskInverted, layer.adjustmentMaskFeatherPx, { signal, memoryBudget });
       }
       context.drawImage(drawing, 0, 0, layer.width, layer.height);
     } finally { context.restore(); }
     return canvas;
   } catch (error) {
-    canvas.width = 1; canvas.height = 1;
+    releaseRenderCanvas(canvas);
     throw error;
   } finally {
-    if (drawing) { drawing.width = 1; drawing.height = 1; }
+    if (drawing) releaseRenderCanvas(drawing);
   }
 }
 
@@ -393,42 +371,51 @@ export async function renderCombinedAdjustmentMask(
   document: ImageStudioDocument,
   maskLayerIds: string[],
   createCanvas: (width: number, height: number) => HTMLCanvasElement, scale: number, signal?: AbortSignal,
+  memoryBudget?: RenderMemoryBudget,
 ): Promise<HTMLCanvasElement | undefined> {
   if (!maskLayerIds.length) return undefined;
   if (maskLayerIds.length === 1) {
     signal?.throwIfAborted();
-    return renderAdjustmentMask(document, maskLayerIds[0], createCanvas, scale);
+    return renderAdjustmentMask(document, maskLayerIds[0], createCanvas, scale, signal, memoryBudget);
   }
   let weights: Float32Array | undefined;
   let width = 0;
   let height = 0;
   let combined: HTMLCanvasElement | undefined;
+  let releaseWeights = () => {};
   try {
     for (const id of maskLayerIds) {
       signal?.throwIfAborted();
-      const canvas = renderAdjustmentMask(document, id, createCanvas, scale);
-      if (!canvas) continue;
+      // Reserve the full accumulator before rendering the first source mask.
+      if (!weights) {
+        width = Math.max(1, Math.ceil(document.canvas.width * scale));
+        height = Math.max(1, Math.ceil(document.canvas.height * scale));
+        releaseWeights = reserveRenderBytes(memoryBudget, width * height * 4);
+        weights = new Float32Array(width * height).fill(1);
+      }
+      const canvas = await renderAdjustmentMask(document, id, createCanvas, scale, signal, memoryBudget);
+      if (!canvas) throw new Error("Adjustment mask is unavailable");
       try {
         const context = canvas.getContext("2d", { willReadFrequently: true });
         if (!context) throw new Error("Adjustment mask canvas is unavailable");
-        if (!weights) {
-          width = canvas.width; height = canvas.height;
-          weights = new Float32Array(width * height).fill(1);
-        } else if (canvas.width !== width || canvas.height !== height) {
+        if (canvas.width !== width || canvas.height !== height) {
           throw new Error("Adjustment mask dimensions do not match");
         }
-        const rows = Math.max(1, Math.floor(ADJUSTMENT_CHUNK_PIXELS * 16 / width));
+        const rows = Math.max(1, Math.floor(MASK_CHUNK_PIXELS / width));
         for (let y = 0; y < height; y += rows) {
           await yieldRenderTask(signal);
           const chunkHeight = Math.min(rows, height - y);
-          const data = context.getImageData(0, y, width, chunkHeight).data;
-          for (let pixel = 0; pixel < width * chunkHeight; pixel += 1) {
-            const index = pixel * 4;
-            weights[y * width + pixel] *= data[index + 3] / 255
-              * (data[index] + data[index + 1] + data[index + 2]) / 765;
-          }
+          const releaseChunk = reserveRenderBytes(memoryBudget, width * chunkHeight * 4);
+          try {
+            const data = context.getImageData(0, y, width, chunkHeight).data;
+            for (let pixel = 0; pixel < width * chunkHeight; pixel += 1) {
+              const index = pixel * 4;
+              weights[y * width + pixel] *= data[index + 3] / 255
+                * (data[index] + data[index + 1] + data[index + 2]) / 765;
+            }
+          } finally { releaseChunk(); }
         }
-      } finally { canvas.width = 1; canvas.height = 1; }
+      } finally { releaseRenderCanvas(canvas); }
     }
     if (!weights) return undefined;
     combined = createCanvas(document.canvas.width, document.canvas.height);
@@ -436,24 +423,27 @@ export async function renderCombinedAdjustmentMask(
     if (!context || combined.width !== width || combined.height !== height) {
       throw new Error("Adjustment mask canvas is unavailable");
     }
-    const rows = Math.max(1, Math.floor(ADJUSTMENT_CHUNK_PIXELS * 16 / width));
+    const rows = Math.max(1, Math.floor(MASK_CHUNK_PIXELS / width));
     for (let y = 0; y < height; y += rows) {
       await yieldRenderTask(signal);
       const chunkHeight = Math.min(rows, height - y);
-      const image = context.createImageData(width, chunkHeight);
-      for (let pixel = 0; pixel < width * chunkHeight; pixel += 1) {
-        const value = Math.round(Math.max(0, Math.min(1, weights[y * width + pixel])) * 255);
-        const index = pixel * 4;
-        image.data[index] = value; image.data[index + 1] = value;
-        image.data[index + 2] = value; image.data[index + 3] = 255;
-      }
-      context.putImageData(image, 0, y);
+      const releaseChunk = reserveRenderBytes(memoryBudget, width * chunkHeight * 4);
+      try {
+        const image = context.createImageData(width, chunkHeight);
+        for (let pixel = 0; pixel < width * chunkHeight; pixel += 1) {
+          const value = Math.round(Math.max(0, Math.min(1, weights[y * width + pixel])) * 255);
+          const index = pixel * 4;
+          image.data[index] = value; image.data[index + 1] = value;
+          image.data[index + 2] = value; image.data[index + 3] = 255;
+        }
+        context.putImageData(image, 0, y);
+      } finally { releaseChunk(); }
     }
     return combined;
   } catch (error) {
-    if (combined) { combined.width = 1; combined.height = 1; }
+    if (combined) releaseRenderCanvas(combined);
     throw error;
-  }
+  } finally { weights = undefined; releaseWeights(); }
 }
 
 export function exportFilename(title: string, format: ExportFormat): string {
@@ -461,119 +451,6 @@ export function exportFilename(title: string, format: ExportFormat): string {
   return `${safe}.${format === "jpeg" ? "jpg" : format}`;
 }
 
-export function renderDrawingLayer(layer: DrawingLayer, createCanvas: (width: number, height: number) => HTMLCanvasElement, scale = 1): HTMLCanvasElement {
-  const canvas = createCanvas(layer.width, layer.height);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas export is unavailable");
-  context.scale(scale, scale);
-  if (layer.type === "mask" && layer.selectionRuns) paintSelectionRuns(context, layer.selectionRuns, layer.width, layer.height);
-  for (const stroke of layer.strokes) {
-    if (!stroke.points.length) continue;
-    const color = layer.type === "mask" ? `rgb(${stroke.value},${stroke.value},${stroke.value})` : stroke.color ?? "#111827";
-    if (stroke.brush && stroke.samples) {
-      renderBrushDabs(context, createBrushDabs(stroke.samples, stroke.size, stroke.brush), color, stroke.mode === "erase");
-      continue;
-    }
-    context.save();
-    context.globalCompositeOperation = stroke.mode === "erase" ? "destination-out" : "source-over";
-    context.strokeStyle = color;
-    context.lineWidth = stroke.size;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    context.beginPath();
-    context.moveTo(stroke.points[0].x, stroke.points[0].y);
-    for (const point of stroke.points.slice(1)) context.lineTo(point.x, point.y);
-    if (stroke.points.length === 1) context.lineTo(stroke.points[0].x + 0.01, stroke.points[0].y);
-    context.stroke();
-    context.restore();
-  }
-  return canvas;
-}
-
-function renderAnnotationLayer(layer: AnnotationLayer, createCanvas: (width: number, height: number) => HTMLCanvasElement, scale = 1): HTMLCanvasElement {
-  const canvas = createCanvas(layer.width, layer.height);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas export is unavailable");
-  context.scale(scale, scale);
-  for (const element of layer.elements) {
-    context.save();
-    if ("stroke" in element) { context.strokeStyle = element.stroke; context.lineWidth = element.strokeWidth; context.lineCap = "round"; context.lineJoin = "round"; }
-    if ("fill" in element) context.fillStyle = element.fill;
-    switch (element.kind) {
-      case "text": {
-        context.translate(element.x, element.y);
-        context.rotate(element.rotation * Math.PI / 180);
-        context.textBaseline = "top";
-        context.textAlign = element.align;
-        context.font = `${element.fontSize}px ${element.fontFamily}`;
-        const originX = element.align === "center" ? element.width / 2 : element.align === "right" ? element.width : 0;
-        element.text.split("\n").forEach((line, index) => context.fillText(line, originX, index * element.fontSize * 1.2));
-        break;
-      }
-      case "rect": {
-        context.translate(element.x, element.y);
-        context.rotate(element.rotation * Math.PI / 180);
-        context.beginPath();
-        context.roundRect ? context.roundRect(0, 0, element.width, element.height, element.cornerRadius) : context.rect(0, 0, element.width, element.height);
-        if (element.fill !== "transparent") context.fill();
-        if (element.strokeWidth > 0) context.stroke();
-        break;
-      }
-      case "ellipse": {
-        context.translate(element.x, element.y);
-        context.rotate(element.rotation * Math.PI / 180);
-        context.beginPath();
-        context.ellipse(0, 0, element.radiusX, element.radiusY, 0, 0, Math.PI * 2);
-        if (element.fill !== "transparent") context.fill();
-        if (element.strokeWidth > 0) context.stroke();
-        break;
-      }
-      case "polygon": {
-        context.translate(element.x, element.y);
-        context.rotate(element.rotation * Math.PI / 180);
-        context.beginPath();
-        for (let index = 0; index < element.sides; index += 1) {
-          const angle = (index / element.sides) * Math.PI * 2 - Math.PI / 2;
-          const point = { x: Math.cos(angle) * element.radius, y: Math.sin(angle) * element.radius };
-          if (index === 0) context.moveTo(point.x, point.y); else context.lineTo(point.x, point.y);
-        }
-        context.closePath();
-        if (element.fill !== "transparent") context.fill();
-        if (element.strokeWidth > 0) context.stroke();
-        break;
-      }
-      case "freehand":
-      case "line": {
-        if (element.points.length) {
-          context.beginPath();
-          context.moveTo(element.points[0].x, element.points[0].y);
-          for (const point of element.points.slice(1)) context.lineTo(point.x, point.y);
-          context.stroke();
-        }
-        break;
-      }
-      case "arrow": {
-        const [start, end] = element.points;
-        const angle = Math.atan2(end.y - start.y, end.x - start.x);
-        const headLength = Math.max(10, element.strokeWidth * 4);
-        context.beginPath();
-        context.moveTo(start.x, start.y);
-        context.lineTo(end.x, end.y);
-        context.stroke();
-        context.beginPath();
-        context.fillStyle = element.stroke;
-        context.moveTo(end.x, end.y);
-        context.lineTo(end.x - headLength * Math.cos(angle - Math.PI / 7), end.y - headLength * Math.sin(angle - Math.PI / 7));
-        context.lineTo(end.x - headLength * Math.cos(angle + Math.PI / 7), end.y - headLength * Math.sin(angle + Math.PI / 7));
-        context.closePath();
-        context.fill();
-        break;
-      }
-    }
-    context.restore();
-  }
-  return canvas;
-}
 
 function applyTransform(context: CanvasRenderingContext2D, transform: RasterLayer["transform"]): void {
   context.translate(transform.x, transform.y);
@@ -588,10 +465,14 @@ function browserCanvas(width: number, height: number): HTMLCanvasElement {
   return canvas;
 }
 
-function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
-  return new Promise((resolve, reject) => canvas.toBlob(
+async function canvasBlob(canvas: HTMLCanvasElement, type: string, quality?: number, signal?: AbortSignal): Promise<Blob> {
+  signal?.throwIfAborted();
+  // Native encoding cannot be interrupted safely; retain its canvas until the callback settles.
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
     (blob) => blob ? resolve(blob) : reject(new Error("The browser could not encode this image format")),
     type,
     quality,
   ));
+  signal?.throwIfAborted();
+  return blob;
 }

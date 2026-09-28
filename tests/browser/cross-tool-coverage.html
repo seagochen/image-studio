@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio cross-tool selection and mask coverage</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { createEmptyDocument, parseDocument } from "../../src/domain/document.ts";
+  import { createDrawingLayer } from "../../src/domain/commands.ts";
+  import { rasterLayerFromImage } from "../../src/domain/importImage.ts";
+  import { resolveRasterEditCoverage, eraseSelectedRasterTiles, bakeSelectedAdjustmentTiles } from "../../src/domain/editCoverage.ts";
+  import { rectangularSelectionMask, ellipticalSelectionMask, polygonSelectionMask, contiguousColorSelectionMask,
+    combineSelectionMask, invertSelectionMask } from "../../src/domain/pixelTools.ts";
+  import { encodeSelectionRuns } from "../../src/domain/selectionMaskRuns.ts";
+  import { maskInputFromLayer } from "../../src/ai/maskInput.ts";
+  import { renderImageStudioDocument } from "../../src/domain/exportImage.ts";
+  import { DocumentHistory } from "../../src/domain/history.ts";
+  import { applyPixelTileDiffs } from "../../src/domain/pixelTileHistory.ts";
+  const result = document.getElementById("result");
+  const assert = (value, message) => { if (!value) throw new Error(message); };
+  const make = (width = 64, height = 64) => Object.assign(document.createElement("canvas"), { width, height });
+  const source = make(), context = source.getContext("2d");
+  context.fillStyle = "#ff0000"; context.fillRect(0, 0, 64, 64);
+  const empty = { ...createEmptyDocument(), canvas: { width: 64, height: 64 } };
+  const mask = { ...createDrawingLayer(empty, "mask", "Clipped soft mask"),
+    strokes: [{ id: "gray", points: [{ x: 0, y: 32 }, { x: 64, y: 32 }], size: 64, mode: "paint", value: 128 }],
+    clipRuns: encodeSelectionRuns(rectangularSelectionMask(64, 64, { x: 8, y: 8 }, { x: 55, y: 55 })) };
+  const raster = { ...rasterLayerFromImage({ dataUrl: source.toDataURL(), mimeType: "image/png", width: 64, height: 64, name: "Source" }),
+    rasterMaskId: mask.id, rasterMaskInverted: true, rasterMaskFeatherPx: 2 };
+  const doc = { ...empty, layers: [raster, mask], selection: { layerId: raster.id } };
+  try {
+    const rectangle = rectangularSelectionMask(64, 64, { x: 16, y: 16 }, { x: 47, y: 47 });
+    const ellipse = ellipticalSelectionMask(64, 64, { x: 12, y: 12 }, { x: 51, y: 51 });
+    const polygon = polygonSelectionMask(64, 64, [{ x: 20, y: 20 }, { x: 44, y: 20 }, { x: 32, y: 44 }]);
+    const colors = contiguousColorSelectionMask(context.getImageData(0, 0, 64, 64).data, 64, 64, { x: 0, y: 0 }, 0);
+    const selections = [rectangle, ellipse, polygon, colors,
+      combineSelectionMask(rectangle, ellipse, "add"), combineSelectionMask(rectangle, polygon, "subtract"),
+      combineSelectionMask(ellipse, rectangle, "intersect"), invertSelectionMask(rectangle)];
+    const samples = [];
+    for (const selection of selections) {
+      const coverage = resolveRasterEditCoverage(doc, raster, selection, make);
+      const blob = await maskInputFromLayer(mask, { inverted: true, featherPx: 2 }, selection);
+      const bitmap = await createImageBitmap(blob), decoded = make(); decoded.getContext("2d").drawImage(bitmap, 0, 0); bitmap.close();
+      const rgba = decoded.getContext("2d").getImageData(0, 0, 64, 64).data;
+      for (let index = 0; index < coverage.length; index++) {
+        assert(rgba[index * 4] === coverage[index] && rgba[index * 4 + 3] === 255, "AI/local effective coverage differs");
+      }
+      const history = new DocumentHistory();
+      const before = context.getImageData(0, 0, 64, 64).data;
+      const diffs = eraseSelectedRasterTiles(source, selection, coverage,
+        bytes => history.canRecordPixelBytes(bytes), tiles => history.canRecordPixel(tiles));
+      history.executePixel(doc, { ...doc, title: "Erased" }, "Erase", raster.id, diffs);
+      const erased = context.getImageData(0, 0, 64, 64).data;
+      for (let index = 0; index < coverage.length; index++) {
+        assert(Math.abs(erased[index * 4 + 3] - (255 - coverage[index])) <= 1, "Delete ignored effective mask");
+      }
+      await history.undo(doc, async (current, _id, tiles, direction) => { applyPixelTileDiffs(source, tiles, direction); return current; });
+      assert(context.getImageData(0, 0, 64, 64).data.every((value, index) => value === before[index]), "Undo changed protected pixels");
+      const baked = bakeSelectedAdjustmentTiles(source, selection, coverage, { kind: "invert", parameters: {} }, 1, "normal",
+        bytes => history.canRecordPixelBytes(bytes), tiles => history.canRecordPixel(tiles));
+      const adjusted = context.getImageData(0, 0, 64, 64).data;
+      for (let index = 0; index < coverage.length; index++) {
+        assert(Math.abs(adjusted[index * 4 + 1] - coverage[index]) <= 1, "Adjustment ignored effective mask");
+      }
+      applyPixelTileDiffs(source, baked, "before");
+      samples.push({ selected: selection.pixels.reduce((sum, value) => sum + value, 0), tileCount: diffs.length });
+      history.clear(); decoded.width = 1; decoded.height = 1;
+    }
+    const reopened = parseDocument(JSON.stringify(doc));
+    const composite = await renderImageStudioDocument(reopened);
+    const fullCoverage = resolveRasterEditCoverage(doc, raster, null, make);
+    const pixels = composite.getContext("2d").getImageData(0, 0, 64, 64).data;
+    for (let index = 0; index < fullCoverage.length; index++) {
+      assert(Math.abs(pixels[index * 4 + 3] - fullCoverage[index]) <= 1, "Export/reopen coverage differs");
+    }
+    const unchanged = source.toDataURL(); let rejected = false;
+    try { eraseSelectedRasterTiles(source, rectangle, fullCoverage, () => false, () => true); } catch { rejected = true; }
+    assert(rejected && source.toDataURL() === unchanged, "History budget rejection altered pixels");
+    composite.width = 1; composite.height = 1;
+    result.textContent = JSON.stringify({ status: "passed", selections: samples, aiCoverage: true,
+      deleteUndo: true, adjustmentBake: true, clippedSoftMask: true, exportReopen: true, budgetRejectedBeforeWrite: true });
+    document.documentElement.dataset.result = "passed";
+  } catch (error) { result.textContent = error.stack || String(error); document.documentElement.dataset.result = "failed"; }
+  finally { source.width = 1; source.height = 1; }
+</script>

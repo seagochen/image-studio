@@ -1,5 +1,5 @@
 import { cloneDocument, defaultTransform, type ImageStudioDocument, type ImageStudioLayer } from "../../domain/document";
-import { planExport, renderImageStudioDocument, type RenderDependencies } from "../../domain/exportImage";
+import { EXPORT_MEMORY_LIMIT_BYTES, maximumGroupDepth, planExport, renderImageStudioDocument, type RenderDependencies } from "../../domain/exportImage";
 import { parseProjectPackage, serializeProjectPackage } from "../projectPackage";
 import { bytesText, readArchive, textBytes, writeArchive, ORA_MAX_EXPANDED_BYTES } from "./archive";
 import { escapeXml, layerAttributes, ORA_MAX_PIXELS, ORA_NAMESPACE, parseStack, pngDataUrl, pngDimensions } from "./stack";
@@ -10,6 +10,14 @@ export interface OraDependencies extends RenderDependencies { }
 export async function exportOpenRaster(document: ImageStudioDocument, dependencies: OraDependencies = {}): Promise<Blob> {
   const {signal} = dependencies;
   planExport({format:"png",width:document.canvas.width,height:document.canvas.height,quality:1,jpegBackground:"#ffffff"},document);
+  // ORA retains encoded files and editable source assets; flat-image canvas reuse is not its budget model.
+  if (document.layers.some((layer) => layer.type === "group" || layer.type === "adjustment" || layer.rasterMaskId)) {
+    const pixels = document.canvas.width * document.canvas.height;
+    const largest = Math.max(0, ...document.layers.map((layer) => layer.width * layer.height));
+    if (pixels * (maximumGroupDepth(document.layers) + 5) * 4 + largest * 4 > EXPORT_MEMORY_LIMIT_BYTES) {
+      throw new Error("OpenRaster export exceeds memory budget");
+    }
+  }
   const files = new Map<string,Uint8Array>([["mimetype",textBytes("image/openraster")]]);
   const put = (path: string, bytes: Uint8Array) => {
     files.set(path,bytes);

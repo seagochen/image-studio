@@ -1,4 +1,4 @@
-import type { ImageStudioDocument, RasterLayer, RasterSource } from "./document";
+import { createId, type ImageStudioDocument, type RasterLayer, type RasterSource } from "./document";
 import { pixelTileDiffBytes, PixelTileArchive, type PixelTileArchiveRef, type PixelTileDiff } from "./pixelTileHistory";
 
 export interface HistoryOptions { maxEntries: number; maxBytes: number }
@@ -20,6 +20,7 @@ interface PixelHistoryEntry {
   afterSelection?: ImageStudioDocument["selection"];
   archive?: PixelTileArchiveRef;
   offloading?: boolean;
+  discarded?: boolean;
   bytes: number;
 }
 
@@ -40,6 +41,8 @@ export class DocumentHistory {
   private redoEntries: HistoryEntry[] = [];
   private pixelArchive: PixelTileArchive | null = null;
   private pixelEntrySequence = 0;
+  private readonly pixelSessionId = createId("history-session");
+  private offloading = false;
 
   constructor(private readonly options: HistoryOptions = DEFAULT_OPTIONS) {}
 
@@ -185,25 +188,34 @@ export class DocumentHistory {
   }
 
   private async offloadPixelEntries(): Promise<void> {
-    if (!this.pixelArchive) return;
-    let hotBytes = pixelHistoryHotBytes([...this.undoEntries, ...this.redoEntries]);
-    for (const entry of [...this.undoEntries, ...this.redoEntries]) {
-      if (hotBytes <= PIXEL_HISTORY_HOT_BUDGET) return;
-      if (!isPixelEntry(entry) || !entry.diffs.length || entry.archive || entry.offloading) continue;
-      try {
-        entry.offloading = true;
-        const archive = await this.pixelArchive.write(`history-${++this.pixelEntrySequence}`, entry.diffs);
-        hotBytes -= pixelTileDiffBytes(entry.diffs);
-        entry.archive = archive; entry.diffs = []; entry.offloading = false;
-      } catch {
-        entry.offloading = false;
-        // Keep the hot copy. A failed local cache must not make undo lossy.
+    if (!this.pixelArchive || this.offloading) return;
+    this.offloading = true;
+    const attempted = new Set<PixelHistoryEntry>();
+    try {
+      while (this.pixelArchive) {
+        const entries = [...this.undoEntries, ...this.redoEntries];
+        if (pixelHistoryHotBytes(entries) <= PIXEL_HISTORY_HOT_BUDGET) return;
+        const entry = entries.find((candidate): candidate is PixelHistoryEntry => isPixelEntry(candidate)
+          && candidate.diffs.length > 0 && !candidate.archive && !candidate.discarded && !attempted.has(candidate));
+        if (!entry) return;
+        attempted.add(entry);
+        const store = this.pixelArchive;
+        try {
+          entry.offloading = true;
+          const archive = await store.write(`${this.pixelSessionId}-${++this.pixelEntrySequence}`, entry.diffs);
+          if (entry.discarded) await store.remove(archive);
+          else { entry.archive = archive; entry.diffs = []; }
+        } catch {
+          // Keep the hot copy. A failed local cache must not make undo lossy.
+        } finally { entry.offloading = false; }
       }
-    }
+    } finally { this.offloading = false; }
   }
 
   private discard(entry: HistoryEntry): void {
-    if (isPixelEntry(entry) && entry.archive && this.pixelArchive) void this.pixelArchive.remove(entry.archive).catch(() => undefined);
+    if (!isPixelEntry(entry)) return;
+    entry.discarded = true;
+    if (entry.archive && this.pixelArchive) void this.pixelArchive.remove(entry.archive).catch(() => undefined);
   }
 
   private clearRedo(): void {

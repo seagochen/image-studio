@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio complex 4K export resource and cancellation smoke test</title>
+<pre id="result">running</pre>
+<script>
+  const fail = (error) => {
+    document.getElementById("result").textContent = String(error?.stack ?? error);
+    document.documentElement.dataset.result = "failed";
+  };
+  window.addEventListener("error", (event) => fail(event.error ?? event.message));
+  window.addEventListener("unhandledrejection", (event) => fail(event.reason));
+</script>
+<script type="module">
+  import { createDrawingLayer, createGroupLayer } from "../../src/domain/commands.ts";
+  import { createAdjustmentLayer } from "../../src/domain/adjustmentEngine.ts";
+  import { createEmptyDocument } from "../../src/domain/document.ts";
+  import { exportImage, planExport, EXPORT_MEMORY_LIMIT_BYTES } from "../../src/domain/exportImage.ts";
+  import { encodeSelectionRuns } from "../../src/domain/selectionMaskRuns.ts";
+  import { rectangularSelectionMask } from "../../src/domain/pixelTools.ts";
+
+  const result = document.getElementById("result");
+  const width = 3840, height = 2160;
+  const empty = { ...createEmptyDocument(), canvas: { width, height } };
+  const outer = createGroupLayer(empty, "Outer group");
+  const inner = { ...createGroupLayer(empty, "Inner group"), parentId: outer.id };
+  const sourceCanvas = Object.assign(document.createElement("canvas"), { width: 64, height: 64 });
+  sourceCanvas.getContext("2d").fillStyle = "#ff0000";
+  sourceCanvas.getContext("2d").fillRect(0, 0, 64, 64);
+  const ownedMask = { ...createDrawingLayer(empty, "mask", "Soft clipped mask"), opacity: 1, parentId: inner.id,
+    clipRuns: encodeSelectionRuns(rectangularSelectionMask(width, height, { x: 0, y: 0 }, { x: width / 2 - 1, y: height - 1 })),
+    strokes: [{ id: "gray", points: [{ x: width / 2, y: height / 2 }],
+      size: Math.hypot(width, height) + 2, mode: "paint", value: 128 }] };
+  const raster = { ...createDrawingLayer(empty, "paint", "Raster"), type: "raster", parentId: inner.id,
+    rasterMaskId: ownedMask.id, rasterMaskFeatherPx: 4,
+    source: { kind: "data-url", value: sourceCanvas.toDataURL(), mimeType: "image/png" } };
+  sourceCanvas.width = 1; sourceCanvas.height = 1;
+  const adjustment = { ...createAdjustmentLayer(empty, "invert", "Masked invert"), parentId: inner.id };
+  const masks = [0, 1, 2].map((index) => ({ ...createDrawingLayer(empty, "mask", "Adjustment mask " + index),
+    opacity: 0.5, parentId: inner.id, selectionRuns: [0, width * height] }));
+  const value = { ...empty, layers: [outer, inner, raster, ownedMask, adjustment, ...masks] };
+  const canvases = [];
+  const createCanvas = (width, height) => {
+    const canvas = Object.assign(document.createElement("canvas"), { width, height });
+    canvases.push(canvas); return canvas;
+  };
+  const options = { format: "png", width, height, quality: .95, jpegBackground: "#ffffff" };
+  const sample = async (blob, x, y) => {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = Object.assign(document.createElement("canvas"), { width: 1, height: 1 });
+    try {
+      if (bitmap.width !== width || bitmap.height !== height) throw new Error("Export size changed");
+      canvas.getContext("2d").drawImage(bitmap, x, y, 1, 1, 0, 0, 1, 1);
+      return [...canvas.getContext("2d").getImageData(0, 0, 1, 1).data];
+    } finally { bitmap.close(); canvas.width = 1; canvas.height = 1; }
+  };
+  try {
+    const results = [];
+    for (const format of ["png", "jpeg", "webp"]) {
+      result.textContent = "Exporting " + format;
+      const started = performance.now();
+      let usage;
+      const blob = await exportImage(value, { ...options, format }, { createCanvas, onMemoryUsage: (current) => { usage = current; } });
+      const center = await sample(blob, width / 4, height / 2), outside = await sample(blob, width * 3 / 4, height / 2);
+      const expected = format === "jpeg" ? [239, 143, 143, 255] : [223, 32, 32, 128];
+      if (center.some((channel, index) => Math.abs(channel - expected[index]) > 4)
+        || (format === "jpeg" ? outside.some((channel) => channel !== 255) : outside[3] !== 0)) {
+        throw new Error("Incorrect complex export pixels: " + JSON.stringify({ format, center, outside }));
+      }
+      const plannedBytes = planExport({ ...options, format }, value).estimatedBytes;
+      if (usage.currentBytes !== 0 || usage.peakBytes > plannedBytes || usage.peakBytes > EXPORT_MEMORY_LIMIT_BYTES
+        || canvases.some((canvas) => canvas.width > 1 || canvas.height > 1)) throw new Error("Export retained resources or exceeded its bound");
+      results.push({ format, plannedBytes, peakWorkingBytes: usage.peakBytes, blobBytes: blob.size,
+        elapsedMs: Math.round(performance.now() - started), center, outside });
+    }
+    const cancellations = [];
+    for (const phase of ["mask", "encoding"]) {
+      result.textContent = "Cancelling " + phase;
+      const controller = new AbortController();
+      let usage, abortScheduled = false, encoded = false;
+      const before = canvases.length;
+      const factory = (width, height) => {
+        const canvas = createCanvas(width, height);
+        const encode = canvas.toBlob.bind(canvas);
+        canvas.toBlob = (...args) => {
+          encoded = true;
+          const returned = encode(...args);
+          if (phase === "encoding") controller.abort();
+          return returned;
+        };
+        return canvas;
+      };
+      let cancelled = false;
+      try {
+        await exportImage(value, options, { signal: controller.signal, createCanvas: factory,
+          onMemoryUsage: (current) => {
+            usage = current;
+            if (phase === "mask" && current.currentBytes > width * height * 20 && !abortScheduled) {
+              abortScheduled = true; setTimeout(() => controller.abort(), 0);
+            }
+          } });
+      } catch (error) {
+        if (error.name !== "AbortError") throw error;
+        cancelled = true;
+      }
+      if (!cancelled || usage.currentBytes !== 0 || canvases.slice(before).some((canvas) => canvas.width > 1 || canvas.height > 1)
+        || phase === "mask" && encoded || phase === "encoding" && !encoded) throw new Error("Cancellation failed: " + phase);
+      cancellations.push({ phase, peakWorkingBytes: usage.peakBytes, encoded, released: true });
+    }
+    result.textContent = JSON.stringify({ status: "passed", width, height, results, cancellations });
+    document.documentElement.dataset.result = "passed";
+  } catch (error) {
+    result.textContent = String(error?.stack ?? error);
+    document.documentElement.dataset.result = "failed";
+  }
+</script>
+</html>

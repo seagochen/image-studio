@@ -121,6 +121,20 @@ describe("Image Studio effective edit coverage", () => {
     expect(() => resolveRasterEditCoverage(document, raster, { width: 1, height: 1, pixels: new Uint8Array([1]) })).toThrow("Selection dimensions do not match raster layer");
   });
 
+  it("applies owned binary clips after grayscale inversion for local editing", () => {
+    const empty = { ...createEmptyDocument(), canvas: { width: 3, height: 1 } };
+    const raster = rasterLayerFromImage({ dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", width: 3, height: 1, name: "Source" });
+    const mask = { ...createDrawingLayer(empty, "mask", "Mask"), clipRuns: [1, 1, 1] };
+    const target = { ...raster, rasterMaskId: mask.id, rasterMaskInverted: true };
+    const canvas = { width: 3, height: 1, getContext: () => ({ scale: () => {},
+      getImageData: () => ({ data: new Uint8ClampedArray([128, 128, 128, 255, 128, 128, 128, 255, 128, 128, 128, 255]) }),
+    }) } as unknown as HTMLCanvasElement;
+    const coverage = (clipInverted: boolean) => resolveRasterEditCoverage({ ...empty,
+      layers: [target, { ...mask, clipInverted }] }, target, null, () => canvas);
+    expect([...coverage(false)!]).toEqual([0, 127, 0]);
+    expect([...coverage(true)!]).toEqual([127, 0, 127]);
+  });
+
   it("uses lossless encoding for scoped edits and erasure", () => {
     expect(editedRasterMimeType("image/jpeg", true)).toBe("image/png");
     expect(editedRasterMimeType("image/webp", true)).toBe("image/png");

@@ -4,6 +4,7 @@ import { adjustmentKernel, isSpatialAdjustment } from "./adjustmentEngine";
 import { renderDrawingLayer } from "./exportImage";
 import { clearSelectedTile, selectedTileRects, type PixelSelectionMask } from "./pixelTools";
 import { applyPixelTileDiffs, PIXEL_HISTORY_TILE_EDGE, PixelTileRecorder, type PixelTileDiff } from "./pixelTileHistory";
+import { decodeSelectionRuns } from "./selectionMaskRuns";
 
 export function editedRasterMimeType(sourceMimeType: string, scoped: boolean, requiresAlpha = false): string {
   return scoped || requiresAlpha ? "image/png"
@@ -69,21 +70,24 @@ export function coverageFromDrawingMask(
 ): Uint8Array {
   if (!Number.isFinite(featherPx) || featherPx < 0 || featherPx > 256) throw new Error("Invalid raster mask feather");
   let canvas = renderDrawingLayer(mask, createCanvas);
-  if (featherPx > 0) {
-    const padding = Math.ceil(featherPx * 3);
-    const blurred = createCanvas(mask.width + padding * 2, mask.height + padding * 2);
-    const context = blurred.getContext("2d");
-    if (!context) throw new Error("Raster mask canvas is unavailable");
-    context.filter = `blur(${featherPx}px)`;
-    context.drawImage(canvas, padding, padding);
-    canvas.width = 1; canvas.height = 1;
-    canvas = blurred;
-  }
   try {
+    if (featherPx > 0) {
+      const padding = Math.ceil(featherPx * 3);
+      const blurred = createCanvas(mask.width + padding * 2, mask.height + padding * 2);
+      try {
+        const context = blurred.getContext("2d");
+        if (!context) throw new Error("Raster mask canvas is unavailable");
+        context.filter = `blur(${featherPx}px)`;
+        context.drawImage(canvas, padding, padding);
+      } catch (error) { blurred.width = 1; blurred.height = 1; throw error; }
+      canvas.width = 1; canvas.height = 1;
+      canvas = blurred;
+    }
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("Raster mask canvas is unavailable");
     const padding = featherPx > 0 ? Math.ceil(featherPx * 3) : 0;
     const coverage = new Uint8Array(mask.width * mask.height);
+    const clip = mask.clipRuns ? decodeSelectionRuns(mask.clipRuns, mask.width, mask.height) : null;
     const rowsPerChunk = Math.max(1, Math.floor(1_048_576 / mask.width));
     for (let y = 0; y < mask.height; y += rowsPerChunk) {
       const rows = Math.min(rowsPerChunk, mask.height - y);
@@ -91,7 +95,8 @@ export function coverageFromDrawingMask(
       for (let index = 0; index < mask.width * rows; index += 1) {
         const offset = index * 4;
         const value = Math.round(image[offset + 3] * (image[offset] + image[offset + 1] + image[offset + 2]) / 765);
-        coverage[y * mask.width + index] = inverted ? 255 - value : value;
+        const position = y * mask.width + index;
+        coverage[position] = clip && (clip[position] !== 0) === (mask.clipInverted === true) ? 0 : inverted ? 255 - value : value;
       }
     }
     return coverage;

@@ -7,16 +7,18 @@ import type { PixelSelectionMask } from "../domain/pixelTools";
  * external model runtimes do not have to infer transparency semantics. */
 export async function maskInputFromSelection(selection: PixelSelectionMask): Promise<Blob> {
   const canvas = createCanvas(selection.width, selection.height);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Mask encoding is unavailable");
-  const image = context.createImageData(selection.width, selection.height);
-  for (let index = 0; index < selection.pixels.length; index += 1) {
-    const value = selection.pixels[index] ? 255 : 0;
-    const offset = index * 4;
-    image.data[offset] = value; image.data[offset + 1] = value; image.data[offset + 2] = value; image.data[offset + 3] = 255;
-  }
-  context.putImageData(image, 0, 0);
-  return canvasBlob(canvas);
+  try {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Mask encoding is unavailable");
+    const image = context.createImageData(selection.width, selection.height);
+    for (let index = 0; index < selection.pixels.length; index += 1) {
+      const value = selection.pixels[index] ? 255 : 0;
+      const offset = index * 4;
+      image.data[offset] = value; image.data[offset + 1] = value; image.data[offset + 2] = value; image.data[offset + 3] = 255;
+    }
+    context.putImageData(image, 0, 0);
+    return await canvasBlob(canvas);
+  } finally { canvas.width = 1; canvas.height = 1; }
 }
 
 export async function maskInputFromLayer(
@@ -24,9 +26,9 @@ export async function maskInputFromLayer(
 ): Promise<Blob> {
   const coverage = coverageFromDrawingMask(layer, options.inverted === true, options.featherPx ?? 0, createCanvas);
   const canvas = createCanvas(layer.width, layer.height);
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Mask encoding is unavailable");
   try {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Mask encoding is unavailable");
     const image = context.createImageData(layer.width, layer.height);
     for (let index = 0; index < coverage.length; index += 1) {
       const value = coverage[index];

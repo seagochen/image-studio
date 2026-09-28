@@ -109,10 +109,9 @@ export class PixelTileRecorder {
 export function applyPixelTileDiffs(canvas: HTMLCanvasElement, diffs: readonly PixelTileDiff[], direction: PixelTileDirection): void {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) throw new Error("Pixel history canvas is unavailable");
+  if (diffs.some((diff) => !validRect(canvas, diff) || diff.before.byteLength !== diff.width * diff.height * 4
+    || diff.after.byteLength !== diff.width * diff.height * 4)) throw new Error("Invalid pixel history tile");
   for (const diff of diffs) {
-    if (!validRect(canvas, diff) || diff.before.byteLength !== diff.width * diff.height * 4 || diff.after.byteLength !== diff.width * diff.height * 4) {
-      throw new Error("Invalid pixel history tile");
-    }
     const source = direction === "before" ? diff.before : diff.after;
     const pixels = new Uint8ClampedArray(source.length);
     pixels.set(source);

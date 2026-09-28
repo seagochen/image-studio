@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio real OPFS history recovery</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { DocumentHistory } from "../../src/domain/history.ts";
+  import { PixelTileArchive, PixelTileRecorder, applyPixelTileDiffs, pixelTileDiffBytes } from "../../src/domain/pixelTileHistory.ts";
+  import { OpfsTileStore, serializeTileCacheKey } from "../../src/domain/tileCache.ts";
+  import { createEmptyDocument } from "../../src/domain/document.ts";
+  const result = document.getElementById("result");
+  const assert = (value, message) => { if (!value) throw new Error(message); };
+  const wait = async (predicate) => {
+    const deadline = performance.now() + 30000;
+    while (!predicate()) { assert(performance.now() < deadline, "OPFS write timed out"); await new Promise(resolve => setTimeout(resolve, 25)); }
+  };
+  const canvas = Object.assign(document.createElement("canvas"), { width: 4096, height: 4096 });
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const sample = () => [...context.getImageData(200, 200, 1, 1).data].join(",");
+  const restore = async (document, _id, diffs, direction) => { applyPixelTileDiffs(canvas, diffs, direction); return document; };
+  const before = createEmptyDocument(), after = { ...before, title: "4K pixel edit" };
+  const histories = [], references = [];
+  try {
+    const started = performance.now();
+    for (const [base, changed] of [["#102030", "#f97316"], ["#0000ff", "#00ff00"]]) {
+      result.textContent = "Writing real 4K OPFS tiles";
+      context.fillStyle = base; context.fillRect(0, 0, 4096, 4096);
+      const recorder = new PixelTileRecorder(canvas); recorder.capture(128, 128, 3200, 320);
+      context.fillStyle = changed; context.fillRect(128, 128, 3200, 320);
+      const diffs = recorder.finish();
+      assert(pixelTileDiffBytes(diffs) > 12 * 1024 * 1024 && diffs.length === 26, "Fixture does not exceed hot budget");
+      const archive = await PixelTileArchive.open(); assert(archive, "OPFS unavailable");
+      const history = new DocumentHistory(); histories.push(history); history.setPixelArchive(archive);
+      let reference;
+      const write = archive.write.bind(archive);
+      archive.write = async (...args) => { reference = await write(...args); return reference; };
+      history.executePixel(before, after, "4K edit", "raster", diffs);
+      await wait(() => reference);
+      references.push({ reference, diffs });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    assert(references[0].reference.id !== references[1].reference.id, "Editor sessions shared archive IDs");
+    const reopened = await PixelTileArchive.open(); let diskReads = 0;
+    const read = reopened.read.bind(reopened);
+    reopened.read = async (...args) => { diskReads++; return read(...args); };
+    histories[0].setPixelArchive(reopened);
+    await histories[0].undo(after, restore); assert(sample() === "16,32,48,255", "Cold undo restored another session's pixels");
+    await histories[0].redo(before, restore); assert(sample() === "249,115,22,255", "Cold redo mismatch");
+    assert(diskReads === 2, "History never read fresh OPFS storage");
+    result.textContent = "Testing missing-file recovery";
+    const { reference, diffs } = references[0];
+    const store = await OpfsTileStore.open("skillsmaster-image-studio-history");
+    const rect = reference.tiles[0];
+    const key = serializeTileCacheKey({ documentId: reference.id, documentVersion: "v1", nodeId: "pixel-history-before",
+      scale: 1, colorModel: "srgb-rgba8", x: rect.x / 256, y: rect.y / 256 });
+    await store.delete(key);
+    histories[0].setPixelArchive(await PixelTileArchive.open());
+    let rejected = false;
+    try { await histories[0].undo(after, restore); } catch { rejected = true; }
+    assert(rejected && sample() === "249,115,22,255" && histories[0].state.canUndo, "Missing OPFS file mutated pixels or history");
+    const repaired = await PixelTileArchive.open(); await repaired.write(reference.id, diffs);
+    histories[0].setPixelArchive(await PixelTileArchive.open());
+    await histories[0].undo(after, restore); assert(sample() === "16,32,48,255", "Retry after archive recovery failed");
+    result.textContent = "Testing quota fallback with real OPFS partial writes";
+    const originalPut = OpfsTileStore.prototype.put; let writes = 0, quotaId;
+    const quotaHistory = new DocumentHistory(); histories.push(quotaHistory);
+    try {
+      OpfsTileStore.prototype.put = async function (...args) {
+        if (++writes === 2) throw new DOMException("Injected fixture quota", "QuotaExceededError");
+        return originalPut.apply(this, args);
+      };
+      const archive = await PixelTileArchive.open();
+      const write = archive.write.bind(archive); let settled = false;
+      archive.write = async (id, diffs) => { quotaId = id; try { return await write(id, diffs); } finally { settled = true; } };
+      quotaHistory.setPixelArchive(archive);
+      context.fillStyle = "#f97316"; context.fillRect(128, 128, 3200, 320);
+      quotaHistory.executePixel(before, after, "Quota edit", "raster", references[0].diffs);
+      await wait(() => settled);
+      await quotaHistory.undo(after, restore); assert(sample() === "16,32,48,255", "Quota failure lost hot undo pixels");
+      const root = await navigator.storage.getDirectory();
+      const directory = await root.getDirectoryHandle("skillsmaster-image-studio-history");
+      for await (const name of directory.keys()) assert(!name.includes(encodeURIComponent(quotaId)), "Quota left a partial archive");
+    } finally { OpfsTileStore.prototype.put = originalPut; }
+    for (const history of histories) history.clear();
+    const cleanup = await PixelTileArchive.open();
+    for (const { reference } of references) await cleanup.remove(reference);
+    const bytes = pixelTileDiffBytes(references[0].diffs);
+    result.textContent = JSON.stringify({ status: "passed", size: 4096, tiles: 26, tileBytes: bytes,
+      fullSnapshotBytes: 4096 * 4096 * 8, diskReads, sessionIsolation: true, missingFileRetry: true,
+      quotaFallback: true, partialWriteCleanup: true, elapsedMs: Math.round(performance.now() - started) });
+    document.documentElement.dataset.result = "passed";
+  } catch (error) {
+    for (const history of histories) history.clear();
+    result.textContent = error.stack || String(error); document.documentElement.dataset.result = "failed";
+  } finally { canvas.width = 1; canvas.height = 1; }
+</script>
