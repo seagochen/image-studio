@@ -3,6 +3,7 @@ import { persistLocale, storedLocale, type Locale } from "../../shared/locale";
 export type { Locale } from "../../shared/locale";
 
 const coreLabelsEn = {
+  addLayerMask: "Add layer mask",
   title: "Image Studio", dashboard: "Dashboard", account: "Account", import: "Open image",
   select: "Select", hand: "Pan", brush: "Brush", eraser: "Eraser", eyedropper: "Eyedropper", undo: "Undo", redo: "Redo",
   fit: "Fit", reset: "100%", layers: "Layers", propertiesTab: "Properties", inspectorPanels: "Editing panels", layerActions: "Layer actions", newLayer: "New layer", newPaintLayer: "New drawing layer", newMaskLayer: "New mask layer", paintLayer: "Paint", maskLayer: "Mask", annotationLayer: "Text & shapes", adjustLayer: "Adjustment layer",
@@ -28,6 +29,7 @@ type CoreLabels = { [Key in MessageKey]: string };
 
 export const CORE_LABELS: Record<Locale, CoreLabels> = {
   ja: {
+    addLayerMask: "レイヤーマスクを追加",
     title: "画像スタジオ", dashboard: "ダッシュボード", account: "アカウント", import: "画像を開く",
     select: "選択", hand: "移動", brush: "ブラシ", eraser: "消しゴム", eyedropper: "スポイト", undo: "元に戻す", redo: "やり直す",
     fit: "全体表示", reset: "100%", layers: "レイヤー", propertiesTab: "プロパティ", inspectorPanels: "編集パネル", layerActions: "レイヤー操作", newLayer: "新規レイヤー", newPaintLayer: "描画レイヤーを追加", newMaskLayer: "マスクレイヤーを追加", paintLayer: "ペイント", maskLayer: "マスク", annotationLayer: "文字と図形", adjustLayer: "調整レイヤー",
@@ -49,6 +51,7 @@ export const CORE_LABELS: Record<Locale, CoreLabels> = {
   },
   en: coreLabelsEn,
   "zh-CN": {
+    addLayerMask: "添加图层蒙版",
     title: "图片工作室", dashboard: "控制台", account: "账户", import: "打开图片",
     select: "选择", hand: "平移", brush: "画笔", eraser: "橡皮擦", eyedropper: "取色器", undo: "撤销", redo: "重做",
     fit: "适合画布", reset: "100%", layers: "图层", propertiesTab: "属性", inspectorPanels: "编辑面板", layerActions: "图层操作", newLayer: "新建图层", newPaintLayer: "新建绘图图层", newMaskLayer: "新建蒙版图层", paintLayer: "绘画图层", maskLayer: "蒙版图层", annotationLayer: "文字与图形图层", adjustLayer: "调整图层",
@@ -69,6 +72,7 @@ export const CORE_LABELS: Record<Locale, CoreLabels> = {
     editorLoading: "正在加载图片编辑器…", saveSucceeded: "项目保存成功", saveFailed: "项目保存失败", statusDraft: "草稿", statusSubmitting: "正在提交", statusRunning: "运行中", statusResultReady: "结果待应用", statusSucceeded: "已完成", statusFailed: "失败", statusDeliveryFailed: "结果获取失败", statusCancelled: "已停止等待", statusStale: "已过期",
   },
   "zh-TW": {
+    addLayerMask: "新增圖層遮罩",
     title: "圖片工作室", dashboard: "控制台", account: "帳戶", import: "開啟圖片",
     select: "選取", hand: "平移", brush: "畫筆", eraser: "橡皮擦", eyedropper: "取色器", undo: "復原", redo: "重做",
     fit: "適合畫布", reset: "100%", layers: "圖層", propertiesTab: "屬性", inspectorPanels: "編輯面板", layerActions: "圖層操作", newLayer: "新建圖層", newPaintLayer: "新增繪圖圖層", newMaskLayer: "新增遮罩圖層", paintLayer: "繪畫圖層", maskLayer: "遮罩圖層", annotationLayer: "文字與圖形圖層", adjustLayer: "調整圖層",

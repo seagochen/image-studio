@@ -256,8 +256,9 @@ export function Studio(): JSX.Element {
   }, [locale, pixelSelection]);
 
   const addMaskToSelectedLayer = useCallback(() => {
-    if (!selected || selected.locked || selected.type === "mask" || selected.rasterMaskId) return;
+    if (!selected || !selectedEditable || selected.type === "mask" || selected.rasterMaskId) return;
     commit((current) => {
+      if (!layerIsEditable(current.layers, selected.id)) return current;
       const mask = selected.type === "adjustment"
         ? { ...createDrawingLayer(current, "mask", `${selected.name} — ${t("maskLayer")}`), parentId: selected.parentId }
         : createAttachedRasterMask(current, selected, `${selected.name} — ${t("maskLayer")}`);
@@ -266,7 +267,7 @@ export function Studio(): JSX.Element {
       return selectLayer(insertLayerAfter(linked, selected.id, { ...mask, width: selected.width, height: selected.height }), mask.id);
     }, selected.type === "adjustment" ? "Add adjustment mask" : "Add raster mask");
     setInspectorTab("properties");
-  }, [commit, selected, t]);
+  }, [commit, selected, selectedEditable, t]);
 
   const mergeLayer = async (layerId: string, direction: -1 | 1) => {
     const snapshot = documentRef.current;
@@ -588,6 +589,9 @@ export function Studio(): JSX.Element {
         <Inspector activeTab={inspectorTab} layerCount={document.layers.length} t={t} onTabChange={setInspectorTab}
           properties={<>
             {selectedRasterTooLarge && <p className="panel-empty">{t("pixelTooLarge")}</p>}
+            {selected && selected.type !== "mask" && !selected.rasterMaskId && <div className="tool-parameters">
+              <button disabled={!selectedEditable} onClick={addMaskToSelectedLayer}>{t("addLayerMask")}</button>
+            </div>}
             <div className="color-parameters">
               <ColorWheel value={paintColor} label={t("colorWheel")} onChange={changePaintColor} />
               <label className="color-slider-row"><span>{t("saturation")}</span><input type="range" min="0" max="100" value={Math.round(paintHsv.saturation * 100)} aria-label={t("saturation")}

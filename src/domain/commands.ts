@@ -51,7 +51,7 @@ export function createAttachedRasterMask(document: ImageStudioDocument, owner: I
   const width = owner.width;
   const height = owner.height;
   return {
-    ...createDrawingLayer(document, "mask", name), parentId: owner.parentId, width, height,
+    ...createDrawingLayer(document, "mask", name), parentId: owner.parentId, width, height, transform: { ...owner.transform },
     strokes: [{
       id: createId("mask-fill"), points: [{ x: width / 2, y: height / 2 }],
       size: Math.hypot(width, height) + 2, mode: "paint", value: 255,

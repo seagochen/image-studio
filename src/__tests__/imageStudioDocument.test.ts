@@ -155,9 +155,12 @@ describe("ImageStudioDocument", () => {
 
   it("creates an attached raster mask white so a new owner remains visible", () => {
     const initial = createEmptyDocument();
-    const paint = { ...createDrawingLayer(initial, "paint", "Paint"), width: 100, height: 60, parentId: "group" };
+    const paint = { ...createDrawingLayer(initial, "paint", "Paint"), width: 100, height: 60, parentId: "group",
+      transform: { x: 40, y: 20, scaleX: 2, scaleY: .5, rotation: 30 } };
     const mask = createAttachedRasterMask(initial, paint, "Paint mask");
     expect(mask).toMatchObject({ parentId: "group", width: 100, height: 60, strokes: [{ mode: "paint", value: 255, points: [{ x: 50, y: 30 }] }] });
     expect(mask.strokes[0].size).toBeGreaterThan(Math.hypot(100, 60));
+    expect(mask.transform).toEqual(paint.transform);
+    expect(mask.transform).not.toBe(paint.transform);
   });
 });
