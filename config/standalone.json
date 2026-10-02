@@ -15,7 +15,7 @@
   },
   "ai": {
     "enabled": true,
-    "baseUrl": "https://skillsmaster.jp",
+    "baseUrl": "https://api.skillsmaster.jp",
     "manifestPath": "/mode-manifest",
     "runsPath": "/v1/runs",
     "requestTimeoutMs": 60000

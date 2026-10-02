@@ -9,7 +9,19 @@ test("requires an explicit mode", () => {
   assert.throws(() => loadConfig({}), ConfigError);
   assert.throws(() => normalizeConfig({ mode: "local" }), /mode/);
   assert.equal(loadConfig({ IMAGE_STUDIO_MODE: "platform" }).mode, "platform");
+  assert.equal(loadConfig({ SKILLSMASTER_MODE: "platform" }).mode, "platform");
   assert.throws(() => loadConfig({ IMAGE_STUDIO_CONFIG: "/nonexistent/config.json" }), /Cannot read config file/);
+});
+
+test("SKILLSMASTER_MODE from the platform host must agree with every other mode source", () => {
+  // The image defaults IMAGE_STUDIO_MODE to platform; the Module Manager adds SKILLSMASTER_MODE.
+  assert.equal(loadConfig({ IMAGE_STUDIO_MODE: "platform", SKILLSMASTER_MODE: "platform" }).mode, "platform");
+  assert.throws(() => loadConfig({ IMAGE_STUDIO_MODE: "standalone", SKILLSMASTER_MODE: "platform" }), /disagree/);
+  const dir = tempDir();
+  const file = path.join(dir, "config.json");
+  fs.writeFileSync(file, JSON.stringify({ mode: "standalone" }));
+  assert.throws(() => loadConfig({ IMAGE_STUDIO_CONFIG: file, SKILLSMASTER_MODE: "platform" }), /does not match/);
+  assert.equal(loadConfig({ IMAGE_STUDIO_CONFIG: file, IMAGE_STUDIO_MODE: "platform" }).mode, "standalone");
 });
 
 test("reads the standalone config file with ports, database and storage paths", () => {
@@ -22,7 +34,7 @@ test("reads the standalone config file with ports, database and storage paths", 
   assert.equal(config.storage.dataDir, "/data/files");
   // AI defaults to skillsmaster.jp with no key until one is entered in Settings.
   assert.equal(config.ai.enabled, true);
-  assert.equal(config.ai.baseUrl, "https://skillsmaster.jp");
+  assert.equal(config.ai.baseUrl, "https://api.skillsmaster.jp");
   assert.equal(config.ai.configuredKey, null);
   assert.equal(config.ai.keyStorePath, "/data/files/settings/skillsmaster-api-key");
   assert.equal(normalizeConfig({ mode: "standalone", ai: { enabled: false } }).ai.enabled, false);

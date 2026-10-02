@@ -61,7 +61,7 @@ open http://localhost:3000                 # 自动跳转到 /apps/image-studio/
   "access": { "basicAuth": null },            // 见“访问控制”
   "ai": {
     "enabled": true,                          // false 时彻底关闭 AI（设置菜单中也不能保存 Key）
-    "baseUrl": "https://skillsmaster.jp",
+    "baseUrl": "https://api.skillsmaster.jp",
     "manifestPath": "/mode-manifest",
     "runsPath": "/v1/runs",
     "requestTimeoutMs": 60000
@@ -69,7 +69,7 @@ open http://localhost:3000                 # 自动跳转到 /apps/image-studio/
 }
 ```
 
-不使用配置文件时，也可以只设置环境变量 `IMAGE_STUDIO_MODE=platform|standalone`（其余取默认值）。`PORT`、`SKILLSMASTER_API_BASE_URL`、`SKILLSMASTER_CUSTOMER_KEY_FILE` 环境变量可覆盖文件中的对应项。
+不使用配置文件时，也可以只设置环境变量 `IMAGE_STUDIO_MODE=platform|standalone`（其余取默认值）。skillsmaster Module Manager 挂载平台模块时会注入 `SKILLSMASTER_MODE=platform`：它必须与配置文件或 `IMAGE_STUDIO_MODE` 给出的模式一致，否则容器拒绝启动。`PORT`、`SKILLSMASTER_API_BASE_URL`、`SKILLSMASTER_CUSTOMER_KEY_FILE` 环境变量可覆盖文件中的对应项。
 
 ## 接入 skillsmaster AI（可选）
 

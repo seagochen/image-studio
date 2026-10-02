@@ -9,7 +9,10 @@
 //                   with a server-side customer key that the browser never sees.
 //
 // The mode comes from the JSON file named by IMAGE_STUDIO_CONFIG. Without that variable
-// the mode must be given by IMAGE_STUDIO_MODE (the image defaults it to "platform").
+// it comes from SKILLSMASTER_MODE, which the skillsmaster Module Manager injects into
+// platform containers, or IMAGE_STUDIO_MODE (the image defaults it to "platform").
+// SKILLSMASTER_MODE must agree with whichever source decides the mode, so a host that
+// mounts the image as a platform module can never end up running it standalone.
 // There is no implicit fallback between the two modes.
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +24,7 @@ const DEFAULTS = Object.freeze({
   standalone: { port: 80 },
 });
 
-export const DEFAULT_SKILLSMASTER_BASE_URL = "https://skillsmaster.jp";
+export const DEFAULT_SKILLSMASTER_BASE_URL = "https://api.skillsmaster.jp";
 export const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const DEFAULT_MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 
@@ -38,8 +41,16 @@ export function loadConfig(env = process.env) {
     try { raw = JSON.parse(text); }
     catch (error) { throw new ConfigError(`Config file ${file} is not valid JSON: ${error.message}`); }
   } else {
-    if (!env.IMAGE_STUDIO_MODE) throw new ConfigError("Set IMAGE_STUDIO_CONFIG to a config file or IMAGE_STUDIO_MODE to platform|standalone");
-    raw = { mode: env.IMAGE_STUDIO_MODE };
+    const envModes = [env.SKILLSMASTER_MODE, env.IMAGE_STUDIO_MODE].map((value) => value?.trim()).filter(Boolean);
+    if (envModes.length === 0) {
+      throw new ConfigError("Set IMAGE_STUDIO_CONFIG to a config file or SKILLSMASTER_MODE / IMAGE_STUDIO_MODE to platform|standalone");
+    }
+    if (new Set(envModes).size > 1) throw new ConfigError("SKILLSMASTER_MODE and IMAGE_STUDIO_MODE disagree");
+    raw = { mode: envModes[0] };
+  }
+  const platformMode = env.SKILLSMASTER_MODE?.trim();
+  if (platformMode && raw && typeof raw === "object" && raw.mode !== platformMode) {
+    throw new ConfigError(`SKILLSMASTER_MODE=${platformMode} does not match the configured mode`);
   }
   return normalizeConfig(raw, env);
 }
