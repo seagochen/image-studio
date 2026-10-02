@@ -1,4 +1,4 @@
-import { isEditableTarget } from "../../../shared/browser";
+import { isEditableTarget } from "../shared/browser";
 import { trapDialogFocus } from "../studio/dialogFocus";
 
 describe("Image Studio accessibility", () => {

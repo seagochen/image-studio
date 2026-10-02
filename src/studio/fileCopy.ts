@@ -13,6 +13,10 @@ const en = {
   failed: "The file could not be processed. Check its format, size and supported layer features.", busy: "Processing file…",
   discard: "This project has unsaved changes. Save it or export OpenRaster before switching. Continue without saving?",
   legacy: "Legacy project (.json)", close: "Close",
+  apiKey: "API Key", apiKeyTitle: "skillsmaster.jp API Key", apiKeyHint: "Image Studio sends AI edits to {baseUrl} with this key. The key is stored only on this Image Studio server and is never shown again in the browser.",
+  apiKeyInput: "API key", apiKeyPlaceholder: "Paste the key issued by skillsmaster.jp", apiKeyStatus: "Current key", apiKeyNone: "Not configured", apiKeySet: "Saved ({hint})",
+  apiKeyManaged: "Set by the server configuration file ({hint}). Change it there.", apiKeyDisabled: "AI is disabled for this installation.", apiKeyLoading: "Loading…",
+  apiKeySaved: "API key saved and verified.", apiKeyUnverified: "API key saved, but it could not be verified now.", apiKeyRemove: "Remove key", apiKeyRemoved: "API key removed.", apiKeyFailed: "The API key could not be saved.",
 };
 
 export type FileCopy = { [Key in keyof typeof en]: string };
@@ -34,6 +38,10 @@ export const fileCopy: Record<"en" | "ja" | "zh-CN" | "zh-TW", FileCopy> = {
     failed: "ファイルを処理できませんでした。形式、サイズ、対応レイヤーを確認してください。", busy: "ファイルを処理中…",
     discard: "未保存の変更があります。切り替える前に保存するかOpenRasterを書き出してください。保存せずに続けますか？",
     legacy: "旧プロジェクト (.json)", close: "閉じる",
+    apiKey: "API キー", apiKeyTitle: "skillsmaster.jp API キー", apiKeyHint: "AI 編集はこのキーで {baseUrl} に送信されます。キーはこの Image Studio サーバーにのみ保存され、ブラウザーに再表示されることはありません。",
+    apiKeyInput: "API キー", apiKeyPlaceholder: "skillsmaster.jp で発行されたキーを貼り付け", apiKeyStatus: "現在のキー", apiKeyNone: "未設定", apiKeySet: "保存済み（{hint}）",
+    apiKeyManaged: "サーバー設定ファイルで指定されています（{hint}）。変更は設定ファイルで行ってください。", apiKeyDisabled: "このインストールでは AI が無効です。", apiKeyLoading: "読み込み中…",
+    apiKeySaved: "API キーを保存し、確認しました。", apiKeyUnverified: "API キーを保存しましたが、現在は確認できませんでした。", apiKeyRemove: "キーを削除", apiKeyRemoved: "API キーを削除しました。", apiKeyFailed: "API キーを保存できませんでした。",
   },
   "zh-CN": {
     menuBar: "应用菜单", file: "文件", edit: "编辑", view: "视图",
@@ -50,6 +58,10 @@ export const fileCopy: Record<"en" | "ja" | "zh-CN" | "zh-TW", FileCopy> = {
     failed: "无法处理文件，请检查格式、大小和图层功能是否受支持。", busy: "正在处理文件…",
     discard: "项目存在未保存的修改。切换前请保存或导出 OpenRaster。仍要放弃未保存修改并继续吗？",
     legacy: "旧版项目 (.json)", close: "关闭",
+    apiKey: "API Key", apiKeyTitle: "skillsmaster.jp API Key", apiKeyHint: "AI 编辑将使用此 Key 发送到 {baseUrl}。Key 只保存在本 Image Studio 服务器上，保存后不会再在浏览器中显示。",
+    apiKeyInput: "API Key", apiKeyPlaceholder: "粘贴 skillsmaster.jp 签发的 Key", apiKeyStatus: "当前 Key", apiKeyNone: "未配置", apiKeySet: "已保存（{hint}）",
+    apiKeyManaged: "由服务器配置文件指定（{hint}），请在配置文件中修改。", apiKeyDisabled: "此安装已禁用 AI。", apiKeyLoading: "加载中…",
+    apiKeySaved: "API Key 已保存并验证通过。", apiKeyUnverified: "API Key 已保存，但暂时无法验证。", apiKeyRemove: "删除 Key", apiKeyRemoved: "API Key 已删除。", apiKeyFailed: "无法保存 API Key。",
   },
   "zh-TW": {
     menuBar: "應用程式選單", file: "檔案", edit: "編輯", view: "檢視",
@@ -66,5 +78,9 @@ export const fileCopy: Record<"en" | "ja" | "zh-CN" | "zh-TW", FileCopy> = {
     failed: "無法處理檔案，請檢查格式、大小與圖層功能是否支援。", busy: "正在處理檔案…",
     discard: "專案有尚未儲存的修改。切換前請儲存或匯出 OpenRaster。仍要放棄未儲存修改並繼續嗎？",
     legacy: "舊版專案 (.json)", close: "關閉",
+    apiKey: "API Key", apiKeyTitle: "skillsmaster.jp API Key", apiKeyHint: "AI 編輯將使用此 Key 傳送到 {baseUrl}。Key 只儲存在本 Image Studio 伺服器上，儲存後不會再於瀏覽器中顯示。",
+    apiKeyInput: "API Key", apiKeyPlaceholder: "貼上 skillsmaster.jp 核發的 Key", apiKeyStatus: "目前 Key", apiKeyNone: "未設定", apiKeySet: "已儲存（{hint}）",
+    apiKeyManaged: "由伺服器設定檔指定（{hint}），請在設定檔中修改。", apiKeyDisabled: "此安裝已停用 AI。", apiKeyLoading: "載入中…",
+    apiKeySaved: "API Key 已儲存並驗證通過。", apiKeyUnverified: "API Key 已儲存，但暫時無法驗證。", apiKeyRemove: "刪除 Key", apiKeyRemoved: "API Key 已刪除。", apiKeyFailed: "無法儲存 API Key。",
   },
 };

@@ -1,4 +1,4 @@
-import { imageToStage, screenToDevice, screenToStage, stageToImage, stageToScreen } from "../../../shared/canvas";
+import { imageToStage, screenToDevice, screenToStage, stageToImage, stageToScreen } from "../shared/canvas";
 
 describe("Image Studio coordinates", () => {
   it("round-trips screen and stage coordinates at zoom and high DPR", () => {

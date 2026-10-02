@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { ImageStudioDocument } from "../domain/document";
 import { renderImageStudioDocument } from "../domain/exportImage";
-import { screenToStage, type Viewport } from "../../../shared/canvas";
+import { screenToStage, type Viewport } from "../shared/canvas";
 import type { MessageKey } from "../i18n";
 import { clampNavigatorPosition, type NavigatorPosition } from "./navigatorPosition";
 import { ProductIcon } from "./ProductIcon";

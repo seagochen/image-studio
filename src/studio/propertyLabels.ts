@@ -1,4 +1,4 @@
-import type { Locale } from "../../../shared/locale";
+import type { Locale } from "../shared/locale";
 
 const en = { width: "Width", height: "Height", radiusSize: "Radius", sides: "Sides", rotation: "Rotation", text: "Text content", font: "Font family", size: "Font size", color: "Text color", align: "Alignment", left: "Left", center: "Center", right: "Right", stroke: "Stroke color", strokeWidth: "Stroke width", fill: "Fill color", filled: "Fill shape", radius: "Corner radius", element: "Object", strength: "Smudge strength", opacity: "Opacity", endColor: "End color", transparent: "Transparent end", cloneHelp: "Alt-click the canvas to choose a clone source.", edit: "Edit object" };
 

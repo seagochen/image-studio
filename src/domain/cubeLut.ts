@@ -1,4 +1,4 @@
-import { LUT_MAX_SIZE_1D, LUT_MAX_SIZE_3D, LUT_NAME_MAX_LENGTH } from "../../../../frontend/src/shared/imageStudioDomain";
+import { LUT_MAX_SIZE_1D, LUT_MAX_SIZE_3D, LUT_NAME_MAX_LENGTH } from "../shared/imageStudioDomain";
 
 // Raw imported .cube file text size, distinct from the document contract's
 // cap on the serialized adjustment.parameters JSON (different measurement

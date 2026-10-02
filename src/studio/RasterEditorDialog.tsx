@@ -7,7 +7,7 @@ import {
 import { mixChannelRange } from "../domain/pixelTools";
 import { constrainRgbaToCoverage, editedRasterMimeType } from "../domain/editCoverage";
 import { ProductIcon, type ProductIconName } from "./ProductIcon";
-import { MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS } from "../../../../frontend/src/shared/imageStudioDomain";
+import { MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS } from "../shared/imageStudioDomain";
 import type { Locale } from "../i18n";
 
 type EditorMode = "adjust" | "filters";

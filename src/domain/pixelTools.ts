@@ -1,4 +1,4 @@
-import { MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS } from "../../../../frontend/src/shared/imageResourceLimits";
+import { MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS } from "../shared/imageResourceLimits";
 
 export interface ChannelMultipliers {
   red: number;

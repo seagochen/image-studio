@@ -1,4 +1,4 @@
-import { SUPPORTED_LOCALES } from "../../../shared/locale";
+import { SUPPORTED_LOCALES } from "../shared/locale";
 import { IMAGE_STUDIO_LOCALE_CATALOGS } from "../studio/i18nCatalogs";
 
 // Issue #165: every Image Studio text catalog must translate the same key set into every

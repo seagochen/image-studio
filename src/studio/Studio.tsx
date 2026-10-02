@@ -22,7 +22,7 @@ import {
   insertLayerAfter, liftSelectedVectorLayer, moveLayer, patchLayer, replaceAdjacentLayers, replaceLastStroke, replaceRasterLayer, replaceRasterPixels,
   selectLayer, setLayerTransform, replaceAnnotationElement,
 } from "../domain/commands";
-import { clampPoint, screenToStage, stageToImage } from "../../../shared/canvas";
+import { clampPoint, screenToStage, stageToImage } from "../shared/canvas";
 import { colorSchemeSwatches, hexToHsv, hsvToHex, COLOR_SCHEME_KINDS, type ColorSchemeKind } from "../domain/color";
 import {
   canvasBlendMode, createEmptyDocument, createId, LAYER_BLEND_MODES, rasterSourceUrl,
@@ -44,6 +44,7 @@ import { bindConfiguredShortcuts, loadShortcuts, SHORTCUT_ACTIONS, type Shortcut
 import { FileMenu, type DeliveryFormat } from "./FileMenu";
 import { clearPreviewTileCache, previewStorageStatus } from "./previewTiles";
 import { ShortcutSettingsDialog } from "./ShortcutSettingsDialog";
+import { ApiKeySettingsDialog } from "./ApiKeySettingsDialog";
 import { fileCopy } from "./fileCopy";
 import { BRUSH_UI, BRUSH_PRESET_LABELS } from "./brushLayerLabels";
 import { DrawingNode } from "./DrawingNode";
@@ -67,6 +68,7 @@ import { ProductIcon, type ProductIconName } from "./ProductIcon";
 import { ToolRail } from "./ToolRail";
 import { Inspector, type InspectorTab } from "./Inspector";
 import { LayerPanel } from "./LayerPanel";
+import { APP_BASE_PATH, isStandaloneMode } from "../runtime/runtimeConfig";
 
 const MAX_DIRECT_PIXEL_COUNT = 4096 * 4096;
 
@@ -111,6 +113,7 @@ export function Studio(): JSX.Element {
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [deliveryFormat, setDeliveryFormat] = useState<DeliveryFormat>("png");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apiKeyOpen, setApiKeyOpen] = useState(false);
   const [saveToast, setSaveToast] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
   const [shortcutBindings, setShortcutBindings] = useState(loadShortcuts);
@@ -346,7 +349,7 @@ export function Studio(): JSX.Element {
 
   useEffect(() => {
     const surface = surfaceRef.current;
-    if (!surface || aiOpen || deliveryOpen || editorInput || settingsOpen || fileBusy || adjustmentDraft) return;
+    if (!surface || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft) return;
     return bindConfiguredShortcuts(surface, shortcutBindings, (action) => {
       if (action === "undo") undoDocument();
       else if (action === "redo") redoDocument();
@@ -360,7 +363,7 @@ export function Studio(): JSX.Element {
         setTool(action); setInspectorTab("properties");
       }
     });
-  }, [aiOpen, deliveryOpen, editorInput, settingsOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
+  }, [aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
 
   useEffect(() => {
     const closeMenusOutside = (event: MouseEvent) => {
@@ -415,10 +418,12 @@ export function Studio(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [saveToast]);
 
+  // Standalone installs have no skillsmaster dashboard, account or support-ticket pages.
+  const standalone = isStandaloneMode();
   return (
     <div className="studio-shell">
       <header className="studio-header">
-        <a className="studio-brand" href="/dashboard">
+        <a className="studio-brand" href={standalone ? APP_BASE_PATH : "/dashboard"}>
           <ProductIcon name="image" className="brand-mark" />
           <span className="brand-label">{t("title")}</span>
         </a>
@@ -429,7 +434,7 @@ export function Studio(): JSX.Element {
           canZoomIn={viewport.scale < MAX_ZOOM} canZoomOut={viewport.scale > MIN_ZOOM} navigatorVisible={!navigatorCollapsed}
           shortcuts={{ undo: shortcutBindings.undo, redo: shortcutBindings.redo, fit: shortcutBindings.fit }}
           onRename={renameProject} onNew={() => void openProject("")} onOpen={(id) => void openProject(id)} onImport={(file) => void importStudioFile(file)}
-          onSave={() => void manuallySaveProject()} onExport={(format) => {setDeliveryFormat(format);setDeliveryOpen(true);}} onSettings={() => setSettingsOpen(true)}
+          onSave={() => void manuallySaveProject()} onExport={(format) => {setDeliveryFormat(format);setDeliveryOpen(true);}} onSettings={() => setSettingsOpen(true)} onApiKey={standalone ? () => setApiKeyOpen(true) : undefined}
           onClearLocalCache={() => { void clearPreviewTileCache().finally(refreshCacheStatus);}} cacheStatus={cacheStatus}
           onUndo={undoDocument} onRedo={redoDocument} onDuplicate={duplicateSelectedLayer} onDelete={removeSelectedLayer}
           onZoomIn={() => zoomAt(1.2)} onZoomOut={() => zoomAt(1 / 1.2)} onActualSize={actualSize} onFit={() => fitView()}
@@ -439,11 +444,13 @@ export function Studio(): JSX.Element {
             <ProductIcon name="save" />
             <span>{persistence === "saving" ? t("saving") : t("save")}</span>
           </button>
-          <span className="header-divider" aria-hidden="true" />
-          <button className="ticket-button" aria-label={t("submitTicket")} title={t("submitTicket")} onClick={() => { window.location.href = "/account?view=issues&issueView=new"; }}>
-            <ProductIcon name="ticket" />
-            <span>{t("submitTicket")}</span>
-          </button>
+          {!standalone && <>
+            <span className="header-divider" aria-hidden="true" />
+            <button className="ticket-button" aria-label={t("submitTicket")} title={t("submitTicket")} onClick={() => { window.location.href = "/account?view=issues&issueView=new"; }}>
+              <ProductIcon name="ticket" />
+              <span>{t("submitTicket")}</span>
+            </button>
+          </>}
           <span className="header-divider" aria-hidden="true" />
           <span className="lang-picker">
             <ProductIcon name="globe" />
@@ -451,10 +458,10 @@ export function Studio(): JSX.Element {
               <option value="ja">日本語</option><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option>
             </select>
           </span>
-          <a className="button account-link" href="/account">
+          {!standalone && <a className="button account-link" href="/account">
             <ProductIcon name="user" />
             <span className="account-label">{t("account")}</span>
-          </a>
+          </a>}
         </div>
       </header>
       {fileBusy && <div className="studio-warning" role="status">{fileCopy[locale].busy}</div>}
@@ -723,6 +730,7 @@ export function Studio(): JSX.Element {
           refreshHistory((value) => value + 1);
           return resultLayer.id;
         }} />}
+      {apiKeyOpen && <ApiKeySettingsDialog copy={fileCopy[locale]} onClose={() => setApiKeyOpen(false)} />}
       {settingsOpen && <ShortcutSettingsDialog bindings={shortcutBindings} copy={fileCopy[locale]}
         labels={Object.fromEntries(SHORTCUT_ACTIONS.map((action) => [action, action === "undo" || action === "redo" || action === "fit" ? t(action) : toolLabel(action)])) as Record<ShortcutAction,string>}
         onSave={(bindings) => {setShortcutBindings(bindings);setSettingsOpen(false);}} onClose={() => setSettingsOpen(false)} />}

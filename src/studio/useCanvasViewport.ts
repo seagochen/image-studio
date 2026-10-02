@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
-import { screenToStage, type Viewport } from "../../../shared/canvas";
+import { screenToStage, type Viewport } from "../shared/canvas";
 
 export const MIN_ZOOM = 0.05;
 export const MAX_ZOOM = 16;

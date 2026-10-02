@@ -1,4 +1,4 @@
-import { IMAGE_STUDIO_AI_OPERATION_STATUSES, parseImageStudioAiOperation } from "../../../../frontend/src/shared/imageStudioAiOperationContract";
+import { IMAGE_STUDIO_AI_OPERATION_STATUSES, parseImageStudioAiOperation } from "../shared/imageStudioAiOperationContract";
 
 const operation = {
   id: "operation-1", projectId: "project-1", baseRevision: 3, mode: "deblur", inputLayerId: "layer-1",
