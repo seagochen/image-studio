@@ -1,0 +1,165 @@
+// Standalone AI adapter: proxies mode manifest, run submission, polling and result
+// delivery to the skillsmaster customer API using a server-side X-Customer-Key.
+//
+// It deliberately does NOT call the platform-only /image-studio/projects/:id/operations
+// pre-registration API and never sends X-Image-Studio-Operation-Id. The operation id is
+// recorded locally and reused as the upstream Idempotency-Key, and result bytes are
+// persisted under the storage volume so a reconnect or restart can still deliver them.
+import fs from "node:fs";
+import { StoreError } from "./store.mjs";
+import { sniffImage } from "./images.mjs";
+
+const MAX_RESULT_BYTES = 128 * 1024 * 1024;
+const FIELD_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+const RESERVED_FIELDS = new Set(["mode", "file", "operation", "mask_field"]);
+
+export class AiUnavailableError extends StoreError {
+  constructor(message, status = 503) { super(status, message); }
+}
+
+export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
+  const enabled = ai.enabled === true;
+
+  function requireEnabled() {
+    if (!enabled) throw new AiUnavailableError(ai.reason ?? "AI is not configured for this Image Studio installation");
+  }
+
+  async function upstream(pathname, init = {}) {
+    requireEnabled();
+    const url = new URL(pathname, `${ai.baseUrl}/`);
+    return request(url, { ...init, headers: { ...init.headers, "X-Customer-Key": ai.customerKey } });
+  }
+
+  async function request(url, init) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ai.requestTimeoutMs ?? 60_000);
+    try {
+      return await fetchImpl(url, { ...init, signal: controller.signal, redirect: "manual" });
+    } catch {
+      throw new AiUnavailableError("The skillsmaster AI API could not be reached", 502);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    status() {
+      return enabled ? { enabled: true } : { enabled: false, reason: ai.reason };
+    },
+
+    async manifest(language) {
+      requireEnabled();
+      const query = language ? `?lang=${encodeURIComponent(language)}` : "";
+      const response = await upstream(`${ai.manifestPath.replace(/^\//, "")}${query}`);
+      const body = await safeJson(response);
+      if (!response.ok) throw new AiUnavailableError(upstreamDetail(body, `AI mode manifest failed (${response.status})`), 502);
+      return body;
+    },
+
+    /** form: a parsed multipart FormData with `operation` (JSON), `file` and optional `mask_field` + `mask`. */
+    async submit(projectId, form) {
+      requireEnabled();
+      let input;
+      try { input = JSON.parse(String(form.get("operation") ?? "")); }
+      catch { throw new StoreError(400, "operation must be a JSON field"); }
+      const operation = store.prepareOperation(projectId, input);
+      if (operation.runId) return { runId: operation.runId, operation };
+
+      const file = form.get("file");
+      if (!(file instanceof Blob) || !file.size) throw new StoreError(400, "file is required");
+      const maskField = form.get("mask_field");
+      const mask = form.get("mask");
+      if (maskField !== null && (typeof maskField !== "string" || !FIELD_NAME.test(maskField) || RESERVED_FIELDS.has(maskField) || !(mask instanceof Blob))) {
+        throw new StoreError(400, "Invalid mask input");
+      }
+
+      const body = new FormData();
+      body.append("mode", operation.mode);
+      body.append("file", file, "image.png");
+      if (maskField) body.append(maskField, mask, "mask.png");
+      for (const [key, value] of Object.entries(operation.parameters)) {
+        if (value !== "" && !RESERVED_FIELDS.has(key) && key !== maskField) body.append(key, value);
+      }
+
+      let response;
+      try {
+        response = await upstream(ai.runsPath.replace(/^\//, ""), { method: "POST", headers: { "Idempotency-Key": operation.id }, body });
+      } catch (error) {
+        // Unknown whether the run was accepted: keep "submitting" so a retry with the
+        // same operation id reuses the same Idempotency-Key.
+        store.updateOperation(operation.id, { error: error.message });
+        throw error;
+      }
+      const result = await safeJson(response);
+      if (!response.ok || typeof result.run_id !== "string" || !result.run_id) {
+        const message = upstreamDetail(result, `AI run submission failed (${response.status})`);
+        store.updateOperation(operation.id, { status: "failed", error: message });
+        throw new StoreError(response.ok ? 502 : clientStatus(response.status), message);
+      }
+      const updated = store.updateOperation(operation.id, { runId: result.run_id, status: "running", error: null });
+      return { runId: result.run_id, operation: updated };
+    },
+
+    async runStatus(runId) {
+      const operation = requireOperation(runId);
+      if (store.hasResult(operation)) return { status: "success", resultReady: true };
+      if (operation.status === "failed") return { status: "failed", resultReady: false, message: operation.error ?? undefined };
+      const response = await upstream(`${ai.runsPath.replace(/^\//, "")}/${encodeURIComponent(runId)}`);
+      const body = await safeJson(response);
+      if (!response.ok) throw new StoreError(clientStatus(response.status), upstreamDetail(body, `AI run status failed (${response.status})`));
+      const status = String(body.status ?? "unknown");
+      const message = typeof body.message === "string" ? body.message : undefined;
+      if (status === "failed") store.updateOperation(operation.id, { status: "failed", error: message ?? "AI image edit failed" });
+      return { status, resultReady: body.result_ready === true, ...(message ? { message } : {}) };
+    },
+
+    /** Returns { path, mimeType } of the persisted result, downloading it once if needed. */
+    async result(runId) {
+      let operation = requireOperation(runId);
+      if (!store.hasResult(operation)) {
+        const response = await upstream(`${ai.runsPath.replace(/^\//, "")}/${encodeURIComponent(runId)}/result`);
+        const body = await safeJson(response);
+        if (!response.ok || typeof body.url !== "string") {
+          throw new StoreError(clientStatus(response.status), upstreamDetail(body, `AI result delivery failed (${response.status})`));
+        }
+        const target = new URL(typeof body.content_url === "string" ? body.content_url : body.url, `${ai.baseUrl}/`);
+        // Only send the customer key back to the configured API origin, never to a storage URL.
+        const sameOrigin = target.origin === new URL(ai.baseUrl).origin;
+        const artifact = sameOrigin
+          ? await upstream(target.toString())
+          : await request(target, {});
+        if (!artifact.ok) {
+          store.updateOperation(operation.id, { status: "delivery-failed", error: `AI result download failed (${artifact.status})` });
+          throw new StoreError(502, `AI result download failed (${artifact.status})`);
+        }
+        const bytes = Buffer.from(await artifact.arrayBuffer());
+        if (bytes.length > MAX_RESULT_BYTES) throw new StoreError(502, "AI result is too large");
+        const image = sniffImage(bytes);
+        if (!image) throw new StoreError(502, "AI result is not a supported image");
+        operation = store.writeResult(operation, bytes, image.mimeType);
+      }
+      return { path: store.resultPath(operation), mimeType: operation.resultMimeType, exists: fs.existsSync(store.resultPath(operation)) };
+    },
+  };
+
+  function requireOperation(runId) {
+    const operation = typeof runId === "string" ? store.getOperationByRun(runId) : null;
+    if (!operation) throw new StoreError(404, "Unknown AI run");
+    return operation;
+  }
+}
+
+async function safeJson(response) {
+  try { return await response.json(); } catch { return {}; }
+}
+
+function upstreamDetail(body, fallback) {
+  return typeof body?.detail === "string" && body.detail.length <= 500 ? body.detail : fallback;
+}
+
+/** Upstream auth failures concern the server's key, not the browser: report them as 502. */
+function clientStatus(status) {
+  if (status === 401 || status === 403) return 502;
+  if (status >= 400 && status < 500) return status;
+  return 502;
+}
