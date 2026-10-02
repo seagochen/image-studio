@@ -14,9 +14,8 @@
     "basicAuth": null
   },
   "ai": {
-    "enabled": false,
-    "baseUrl": "https://skillsmaster.example.com",
-    "customerKeyFile": "/run/secrets/image-studio/skillsmaster-customer-key",
+    "enabled": true,
+    "baseUrl": "https://skillsmaster.jp",
     "manifestPath": "/mode-manifest",
     "runsPath": "/v1/runs",
     "requestTimeoutMs": 60000

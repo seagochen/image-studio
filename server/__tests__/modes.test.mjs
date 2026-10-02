@@ -20,7 +20,12 @@ test("reads the standalone config file with ports, database and storage paths", 
   assert.equal(config.server.port, 80);
   assert.equal(config.storage.databasePath, "/data/db/x.sqlite");
   assert.equal(config.storage.dataDir, "/data/files");
-  assert.equal(config.ai.enabled, false);
+  // AI defaults to skillsmaster.jp with no key until one is entered in Settings.
+  assert.equal(config.ai.enabled, true);
+  assert.equal(config.ai.baseUrl, "https://skillsmaster.jp");
+  assert.equal(config.ai.configuredKey, null);
+  assert.equal(config.ai.keyStorePath, "/data/files/settings/skillsmaster-api-key");
+  assert.equal(normalizeConfig({ mode: "standalone", ai: { enabled: false } }).ai.enabled, false);
 });
 
 test("platform mode refuses storage, AI keys and access settings", () => {
@@ -30,16 +35,16 @@ test("platform mode refuses storage, AI keys and access settings", () => {
   assert.throws(() => normalizeConfig({ mode: "platform" }, { SKILLSMASTER_CUSTOMER_KEY_FILE: "/run/secrets/key" }), /customer key/);
 });
 
-test("enabled AI requires a readable key and a credential-free base URL", () => {
+test("a deployment-provided key must be readable and the base URL credential-free", () => {
   const dir = tempDir();
   const key = path.join(dir, "key");
   fs.writeFileSync(key, "ck_live_example\n");
   const config = normalizeConfig({ mode: "standalone", ai: { baseUrl: "https://ai.example.com/", customerKeyFile: key } });
-  assert.equal(config.ai.customerKey, "ck_live_example");
+  assert.equal(config.ai.configuredKey, "ck_live_example");
   assert.equal(config.ai.baseUrl, "https://ai.example.com");
   assert.throws(() => normalizeConfig({ mode: "standalone", ai: { baseUrl: "https://ai.example.com", customerKeyFile: path.join(dir, "missing") } }), /Cannot read/);
   assert.throws(() => normalizeConfig({ mode: "standalone", ai: { baseUrl: "https://user:pw@ai.example.com", customerKeyFile: key } }), /credentials/);
-  assert.equal(normalizeConfig({ mode: "standalone", ai: { baseUrl: "https://ai.example.com", customerKeyEnv: "K" } }, { K: "env-key" }).ai.customerKey, "env-key");
+  assert.equal(normalizeConfig({ mode: "standalone", ai: { baseUrl: "https://ai.example.com", customerKeyEnv: "K" } }, { K: "env-key" }).ai.configuredKey, "env-key");
 });
 
 test("platform mode serves only static assets, /healthz and runtime config", async (t) => {

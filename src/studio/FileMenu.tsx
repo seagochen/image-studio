@@ -4,7 +4,7 @@ import type { ProjectSummary } from "../projects/projectClient";
 import { ProductIcon, type ProductIconName } from "./ProductIcon";
 
 export type DeliveryFormat = "png" | "jpeg" | "webp" | "ora";
-type MenuName = "file" | "edit" | "view";
+type MenuName = "file" | "edit" | "view" | "settings";
 type SubmenuName = "projects" | "import" | "export";
 
 interface Props {
@@ -29,6 +29,8 @@ interface Props {
   onSave: () => void;
   onExport: (format: DeliveryFormat) => void;
   onSettings: () => void;
+  /** Standalone mode only: Settings → API Key for skillsmaster.jp. */
+  onApiKey?: () => void;
   onClearLocalCache: () => void;
   cacheStatus: string;
   onUndo: () => void;
@@ -42,7 +44,7 @@ interface Props {
   onToggleNavigator: () => void;
 }
 
-const MENUS: MenuName[] = ["file", "edit", "view"];
+const MENUS: MenuName[] = ["file", "edit", "view", "settings"];
 
 export function FileMenu(props: Props): JSX.Element {
   const { title, copy: t, projects, busy } = props;
@@ -152,7 +154,6 @@ export function FileMenu(props: Props): JSX.Element {
             {submenu("export", "export", t.export, (["png", "jpeg", "webp", "ora"] as const).map((format) =>
               row(null, format === "ora" ? "OpenRaster (.ora)" : format === "jpeg" ? "JPG" : format.toUpperCase(), () => props.onExport(format), { key: format })), !props.canExport || busy)}
             <hr />
-            {row("settings", t.settings, props.onSettings)}
             {row("trash", t.clearLocalCache, props.onClearLocalCache)}
             <button type="button" role="menuitem" className="studio-menu-row" disabled><span className="menu-icon" />{props.cacheStatus}</button>
           </>}
@@ -170,6 +171,10 @@ export function FileMenu(props: Props): JSX.Element {
             {row("marquee", t.fit, props.onFit, { shortcut: props.shortcuts.fit })}
             <hr />
             {row("image", t.navigator, props.onToggleNavigator, { checked: props.navigatorVisible })}
+          </>}
+          {menu === "settings" && <>
+            {row("settings", t.shortcuts, props.onSettings)}
+            {props.onApiKey && row("key", t.apiKey, props.onApiKey)}
           </>}
         </div>}
       </div>)}

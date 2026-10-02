@@ -6,6 +6,7 @@
 // recorded locally and reused as the upstream Idempotency-Key, and result bytes are
 // persisted under the storage volume so a reconnect or restart can still deliver them.
 import fs from "node:fs";
+import path from "node:path";
 import { StoreError } from "./store.mjs";
 import { sniffImage } from "./images.mjs";
 
@@ -17,17 +18,27 @@ export class AiUnavailableError extends StoreError {
   constructor(message, status = 503) { super(status, message); }
 }
 
+export const NO_KEY_REASON = "No skillsmaster API key is configured. Add one in Settings → API Key.";
+const API_KEY_PATTERN = /^[\x21-\x7e]{8,512}$/;
+
 export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
   const enabled = ai.enabled === true;
+  const keys = enabled ? createKeyStore(ai) : null;
 
   function requireEnabled() {
-    if (!enabled) throw new AiUnavailableError(ai.reason ?? "AI is not configured for this Image Studio installation");
+    if (!enabled) throw new AiUnavailableError(ai.reason ?? "AI is disabled for this Image Studio installation");
   }
 
-  async function upstream(pathname, init = {}) {
+  function requireKey() {
     requireEnabled();
+    const key = keys.current();
+    if (!key) throw new AiUnavailableError(NO_KEY_REASON);
+    return key;
+  }
+
+  async function upstream(pathname, init = {}, key = requireKey()) {
     const url = new URL(pathname, `${ai.baseUrl}/`);
-    return request(url, { ...init, headers: { ...init.headers, "X-Customer-Key": ai.customerKey } });
+    return request(url, { ...init, headers: { ...init.headers, "X-Customer-Key": key } });
   }
 
   async function request(url, init) {
@@ -42,23 +53,71 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
     }
   }
 
+  function manifestUrl(language) {
+    const query = language ? `?lang=${encodeURIComponent(language)}` : "";
+    return `${ai.manifestPath.replace(/^\//, "")}${query}`;
+  }
+
   return {
     status() {
-      return enabled ? { enabled: true } : { enabled: false, reason: ai.reason };
+      if (!enabled) return { enabled: false, reason: ai.reason };
+      return keys.current() ? { enabled: true } : { enabled: false, reason: NO_KEY_REASON };
+    },
+
+    /** Settings view for the browser. Never includes the key itself, only its last 4 characters. */
+    settings() {
+      if (!enabled) return { enabled: false, reason: ai.reason, baseUrl: null, keySource: "none", keyHint: null, editable: false };
+      const source = keys.source();
+      const key = keys.current();
+      return {
+        enabled: true, baseUrl: ai.baseUrl, keySource: source, keyHint: key ? `…${key.slice(-4)}` : null,
+        // A key provided by the deployment (file/env) is managed outside the UI.
+        editable: source !== "config",
+      };
+    },
+
+    /**
+     * Validates the key against skillsmaster before storing it. A key the API rejects
+     * (401/403) is not saved; if skillsmaster is unreachable the key is saved unverified.
+     */
+    async saveApiKey(value) {
+      requireEnabled();
+      if (keys.source() === "config") throw new StoreError(409, "The API key is managed by the server configuration file");
+      const key = typeof value === "string" ? value.trim() : "";
+      if (!API_KEY_PATTERN.test(key)) throw new StoreError(400, "Enter the API key exactly as issued by skillsmaster.jp");
+      let verified = false;
+      let warning;
+      try {
+        const response = await upstream(manifestUrl(""), {}, key);
+        if (response.status === 401 || response.status === 403) throw new StoreError(422, "skillsmaster.jp rejected this API key");
+        verified = response.ok;
+        if (!response.ok) warning = `skillsmaster.jp answered ${response.status}; the key was saved without verification`;
+      } catch (error) {
+        if (error instanceof StoreError && error.status === 422) throw error;
+        warning = "skillsmaster.jp could not be reached; the key was saved without verification";
+      }
+      keys.save(key);
+      return { ...this.settings(), verified, ...(warning ? { warning } : {}) };
+    },
+
+    deleteApiKey() {
+      requireEnabled();
+      if (keys.source() === "config") throw new StoreError(409, "The API key is managed by the server configuration file");
+      keys.remove();
+      return this.settings();
     },
 
     async manifest(language) {
-      requireEnabled();
-      const query = language ? `?lang=${encodeURIComponent(language)}` : "";
-      const response = await upstream(`${ai.manifestPath.replace(/^\//, "")}${query}`);
+      const response = await upstream(manifestUrl(language));
       const body = await safeJson(response);
+      if (response.status === 401 || response.status === 403) throw new AiUnavailableError("skillsmaster.jp rejected the configured API key. Update it in Settings → API Key.", 502);
       if (!response.ok) throw new AiUnavailableError(upstreamDetail(body, `AI mode manifest failed (${response.status})`), 502);
       return body;
     },
 
     /** form: a parsed multipart FormData with `operation` (JSON), `file` and optional `mask_field` + `mask`. */
     async submit(projectId, form) {
-      requireEnabled();
+      requireKey();
       let input;
       try { input = JSON.parse(String(form.get("operation") ?? "")); }
       catch { throw new StoreError(400, "operation must be a JSON field"); }
@@ -147,6 +206,32 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
     if (!operation) throw new StoreError(404, "Unknown AI run");
     return operation;
   }
+}
+
+/** Customer key holder: deployment-provided key wins; otherwise the key saved from Settings. */
+function createKeyStore(ai) {
+  const file = ai.keyStorePath;
+  let saved = readSaved();
+
+  function readSaved() {
+    try { return fs.readFileSync(file, "utf8").trim() || null; } catch { return null; }
+  }
+
+  return {
+    current: () => ai.configuredKey ?? saved,
+    source: () => (ai.configuredKey ? "config" : saved ? "settings" : "none"),
+    save(key) {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const temp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, `${key}\n`, { mode: 0o600 });
+      fs.renameSync(temp, file);
+      saved = key;
+    },
+    remove() {
+      fs.rmSync(file, { force: true });
+      saved = null;
+    },
+  };
 }
 
 async function safeJson(response) {

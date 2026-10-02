@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { NO_KEY_REASON } from "../aiProxy.mjs";
 import { documentWith, jsonInit, png, rasterLayer, startApp, startFakeSkillsmaster, tempDir } from "./helpers.mjs";
 
 async function setup(t, { dir = tempDir(), upstream } = {}) {
@@ -34,10 +35,10 @@ function operationForm(projectId, { id = "ai-operation-1", mask = false } = {}) 
 test("reports a clear status and keeps the project API working without AI configuration", async (t) => {
   const app = await startApp();
   t.after(() => app.close());
-  assert.deepEqual(await (await app.fetch("/local-ai/status")).json(), { enabled: false, reason: "AI is not configured for this Image Studio installation" });
+  assert.deepEqual(await (await app.fetch("/local-ai/status")).json(), { enabled: false, reason: NO_KEY_REASON });
   const manifest = await app.fetch("/local-ai/mode-manifest?lang=en");
   assert.equal(manifest.status, 503);
-  assert.match((await manifest.json()).detail, /not configured/);
+  assert.match((await manifest.json()).detail, /Settings → API Key/);
   assert.equal((await app.fetch("/image-studio/projects")).status, 200);
 });
 
@@ -138,4 +139,86 @@ test("never sends the key to the browser or logs it in errors", async (t) => {
   const text = await response.text();
   assert.ok(!text.includes("wrong-secret-key"));
   assert.ok(!JSON.stringify(await (await app.fetch("/apps/image-studio/runtime-config.json")).json()).includes("wrong-secret-key"));
+});
+
+async function settingsApp(t, fake, extra = {}) {
+  const app = await startApp({ ai: { baseUrl: fake.baseUrl, ...extra } });
+  t.after(() => app.close());
+  return app;
+}
+
+test("saves an API key from Settings server-side and uses it for skillsmaster calls", async (t) => {
+  const fake = await startFakeSkillsmaster();
+  t.after(() => fake.close());
+  const app = await settingsApp(t, fake);
+  assert.deepEqual(await (await app.fetch("/local-ai/settings")).json(),
+    { enabled: true, baseUrl: fake.baseUrl, keySource: "none", keyHint: null, editable: true });
+
+  const saved = await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: ` ${fake.key} ` }));
+  assert.equal(saved.status, 200);
+  const body = await saved.json();
+  assert.deepEqual(body, { enabled: true, baseUrl: fake.baseUrl, keySource: "settings", keyHint: `…${fake.key.slice(-4)}`, editable: true, verified: true });
+  assert.ok(!JSON.stringify(body).includes(fake.key));
+
+  const keyFile = path.join(app.config.storage.dataDir, "settings", "skillsmaster-api-key");
+  assert.equal(fs.readFileSync(keyFile, "utf8").trim(), fake.key);
+  assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
+  assert.deepEqual(await (await app.fetch("/apps/image-studio/runtime-config.json")).json(), { mode: "standalone", ai: { available: true } });
+  assert.equal((await (await app.fetch("/local-ai/mode-manifest?lang=en")).json()).modes.deblur.enabled, true);
+  assert.equal(fake.state.requests.at(-1).headers["x-customer-key"], fake.key);
+
+  // The key survives a restart because it lives on the storage volume.
+  await app.close();
+  const restarted = await startApp({ dir: app.dir, ai: { baseUrl: fake.baseUrl } });
+  t.after(() => restarted.close());
+  assert.equal((await (await restarted.fetch("/local-ai/settings")).json()).keySource, "settings");
+
+  const removed = await (await restarted.fetch("/local-ai/settings/api-key", { method: "DELETE" })).json();
+  assert.equal(removed.keySource, "none");
+  assert.ok(!fs.existsSync(keyFile));
+  assert.equal((await restarted.fetch("/local-ai/mode-manifest?lang=en")).status, 503);
+});
+
+test("rejects keys skillsmaster refuses, malformed keys and cross-site writes", async (t) => {
+  const fake = await startFakeSkillsmaster();
+  t.after(() => fake.close());
+  const app = await settingsApp(t, fake);
+  const rejected = await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "wrong-key-123" }));
+  assert.equal(rejected.status, 422);
+  assert.equal((await (await app.fetch("/local-ai/settings")).json()).keySource, "none");
+  assert.equal((await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "short" }))).status, 400);
+  assert.equal((await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "has spaces inside key" }))).status, 400);
+  const crossSite = await app.fetch("/local-ai/settings/api-key", {
+    ...jsonInit("PUT", { apiKey: fake.key }), headers: { "Content-Type": "application/json", Origin: "https://evil.example" },
+  });
+  assert.equal(crossSite.status, 403);
+});
+
+test("saves the key unverified when skillsmaster is unreachable", async (t) => {
+  const app = await startApp({ ai: { baseUrl: "http://127.0.0.1:9", requestTimeoutMs: 2000 } });
+  t.after(() => app.close());
+  const body = await (await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "ck_offline_1234" }))).json();
+  assert.equal(body.verified, false);
+  assert.match(body.warning, /could not be reached/);
+  assert.equal(body.keySource, "settings");
+});
+
+test("a key from the server config file is read-only in Settings", async (t) => {
+  const fake = await startFakeSkillsmaster();
+  t.after(() => fake.close());
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, "key"), fake.key);
+  const app = await startApp({ dir, ai: { baseUrl: fake.baseUrl, customerKeyFile: path.join(dir, "key") } });
+  t.after(() => app.close());
+  const settings = await (await app.fetch("/local-ai/settings")).json();
+  assert.deepEqual([settings.keySource, settings.editable], ["config", false]);
+  assert.equal((await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "another-key-123" }))).status, 409);
+  assert.equal((await app.fetch("/local-ai/settings/api-key", { method: "DELETE" })).status, 409);
+});
+
+test("an administrator can disable AI entirely", async (t) => {
+  const app = await startApp({ ai: { enabled: false } });
+  t.after(() => app.close());
+  assert.equal((await (await app.fetch("/local-ai/settings")).json()).enabled, false);
+  assert.equal((await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "ck_some_key_1" }))).status, 503);
 });

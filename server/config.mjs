@@ -21,6 +21,7 @@ const DEFAULTS = Object.freeze({
   standalone: { port: 80 },
 });
 
+export const DEFAULT_SKILLSMASTER_BASE_URL = "https://skillsmaster.jp";
 export const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const DEFAULT_MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 
@@ -80,22 +81,27 @@ export function normalizeConfig(raw, env = {}) {
     basicAuth = Object.freeze({ username, password });
   }
 
+  // AI is on by default and talks to skillsmaster.jp. The customer key either comes from
+  // the deployment (ai.customerKeyFile / ai.customerKeyEnv, read-only in the UI) or is
+  // entered in Settings → API Key and stored server-side under the storage volume.
   const ai = objectOrEmpty(raw.ai, "ai");
-  const baseUrlValue = env.SKILLSMASTER_API_BASE_URL ?? ai.baseUrl;
-  const keyFile = env.SKILLSMASTER_CUSTOMER_KEY_FILE ?? ai.customerKeyFile;
-  const keyEnv = ai.customerKeyEnv ? string(ai.customerKeyEnv, "ai.customerKeyEnv") : null;
-  const aiEnabled = ai.enabled === undefined ? Boolean(baseUrlValue) : ai.enabled === true;
-  let aiConfig = Object.freeze({ enabled: false, reason: "AI is not configured for this Image Studio installation" });
+  const aiEnabled = ai.enabled !== false;
+  let aiConfig = Object.freeze({ enabled: false, reason: "AI is disabled for this Image Studio installation" });
   if (aiEnabled) {
-    const baseUrl = parseBaseUrl(string(baseUrlValue, "ai.baseUrl"));
-    let customerKey = null;
-    if (keyFile) customerKey = readSecretFile(keyFile, "ai.customerKeyFile");
-    else if (keyEnv) customerKey = env[keyEnv]?.trim() || null;
-    if (!customerKey) throw new ConfigError("AI is enabled but no customer key was found (set ai.customerKeyFile or ai.customerKeyEnv)");
+    const baseUrl = parseBaseUrl(string(env.SKILLSMASTER_API_BASE_URL ?? ai.baseUrl ?? DEFAULT_SKILLSMASTER_BASE_URL, "ai.baseUrl"));
+    const keyFile = env.SKILLSMASTER_CUSTOMER_KEY_FILE ?? ai.customerKeyFile;
+    const keyEnv = ai.customerKeyEnv ? string(ai.customerKeyEnv, "ai.customerKeyEnv") : null;
+    let configuredKey = null;
+    if (keyFile) configuredKey = readSecretFile(keyFile, "ai.customerKeyFile");
+    else if (keyEnv) {
+      configuredKey = env[keyEnv]?.trim() || null;
+      if (!configuredKey) throw new ConfigError(`ai.customerKeyEnv names ${keyEnv}, which is empty`);
+    }
     aiConfig = Object.freeze({
       enabled: true,
       baseUrl,
-      customerKey,
+      configuredKey,
+      keyStorePath: path.join(dataDir, "settings", "skillsmaster-api-key"),
       manifestPath: string(ai.manifestPath ?? "/mode-manifest", "ai.manifestPath"),
       runsPath: string(ai.runsPath ?? "/v1/runs", "ai.runsPath"),
       requestTimeoutMs: integer(ai.requestTimeoutMs ?? 60_000, "ai.requestTimeoutMs", 1000, 600_000),

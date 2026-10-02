@@ -5,7 +5,7 @@ Image Studio 是一个基于浏览器的分层图像编辑器（栅格 / 绘制 
 
 | 模式 | 用途 | 容器提供的内容 | 身份 / 项目 / AI |
 | --- | --- | --- | --- |
-| `standalone` 独立模式 | 本机 Docker 运行 | 静态页面、`/healthz`、本地项目 API、AI 代理 | 无需登录；SQLite + 存储目录（挂载卷）；可选接入 skillsmaster AI，客户 key 只在服务端 |
+| `standalone` 独立模式 | 本机 Docker 运行 | 静态页面、`/healthz`、本地项目 API、AI 代理 | 无需登录；SQLite + 存储目录（挂载卷）；可在“设置 → API Key”接入 skillsmaster.jp AI，Key 只保存在服务端 |
 | `platform` 平台挂载模式 | 由 skillsmaster 管理后台挂载到 `/apps/image-studio/*` | 仅静态资源、`/healthz`、`/runtime-config.json` | 沿用 skillsmaster 同源 Session / App Session 与平台项目、AI 接口 |
 
 浏览器启动时读取 `/apps/image-studio/runtime-config.json` 决定模式；读取失败时直接报错，**不会**在两种模式之间自动回退。
@@ -60,9 +60,8 @@ open http://localhost:3000                 # 自动跳转到 /apps/image-studio/
   },
   "access": { "basicAuth": null },            // 见“访问控制”
   "ai": {
-    "enabled": false,                         // 见“接入 skillsmaster AI”
-    "baseUrl": "https://skillsmaster.example.com",
-    "customerKeyFile": "/run/secrets/image-studio/skillsmaster-customer-key",
+    "enabled": true,                          // false 时彻底关闭 AI（设置菜单中也不能保存 Key）
+    "baseUrl": "https://skillsmaster.jp",
     "manifestPath": "/mode-manifest",
     "runsPath": "/v1/runs",
     "requestTimeoutMs": 60000
@@ -74,13 +73,28 @@ open http://localhost:3000                 # 自动跳转到 /apps/image-studio/
 
 ## 接入 skillsmaster AI（可选）
 
-未配置时普通编辑与保存完全可用，AI 编辑对话框会明确提示 AI 未配置。启用方法：
+未配置 API Key 时普通编辑与保存完全可用，AI 编辑对话框会提示去设置 Key。
+
+### 方式一：在界面中设置（推荐）
+
+1. 在 skillsmaster.jp 获取 API Key。
+2. 打开 Image Studio，点击顶部菜单 **设置 → API Key**。
+3. 粘贴 Key 并点击 **保存**。
+
+保存时服务端会先用该 Key 访问 skillsmaster.jp：被拒绝（401/403）的 Key 不会保存；skillsmaster.jp 暂时不可达时会保存并提示“暂时无法验证”。
+Key 以 `0600` 权限保存在存储卷的 `settings/skillsmaster-api-key`（即宿主机 `data/storage/settings/`），容器重启后仍然有效；对话框之后只显示末 4 位，也可以在此删除。
+平台挂载模式下不显示此菜单项（平台模式使用 skillsmaster 登录会话）。
+
+### 方式二：由部署方通过文件提供
 
 ```bash
 printf '%s' 'YOUR-CUSTOMER-KEY' > secrets/skillsmaster-customer-key
 ```
 
-密钥文件须对容器用户（`IMAGE_STUDIO_UID`）可读。然后在 `config/standalone.json` 中设置 `"ai": { "enabled": true, "baseUrl": "https://<你的 skillsmaster>" , ... }`，执行 `docker compose restart`。
+在 `config/standalone.json` 的 `ai` 中加入 `"customerKeyFile": "/run/secrets/image-studio/skillsmaster-customer-key"`（或 `"customerKeyEnv": "变量名"`），执行 `docker compose restart`。
+密钥文件须对容器用户（`IMAGE_STUDIO_UID`）可读。以这种方式提供的 Key 优先，并在 **设置 → API Key** 中显示为只读。
+
+### 安全性
 
 - 客户 key 只由容器服务端读取，以 `X-Customer-Key` 请求头代理 manifest、提交、轮询与结果下载；不会出现在静态 bundle、浏览器响应、浏览器存储或日志中，也只会发送到 `baseUrl` 同源地址。
 - 独立适配器不调用平台专用的 `/image-studio/projects/:id/operations` 预登记接口，也不发送 `X-Image-Studio-Operation-Id`。操作 ID 记录在本地 SQLite，并作为上游 `Idempotency-Key`，重复提交不会产生重复任务。

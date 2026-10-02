@@ -104,6 +104,14 @@ export function createHandler({ config, store = null, ai = null, log = () => {} 
   async function routeAi(req, res, url, parts) {
     const method = req.method;
     if (parts[0] === "status" && parts.length === 1 && method === "GET") return sendJson(res, 200, ai.status());
+    if (parts[0] === "settings" && parts.length === 1 && method === "GET") return sendJson(res, 200, ai.settings());
+    if (parts[0] === "settings" && parts[1] === "api-key" && parts.length === 2) {
+      if (method === "PUT") {
+        const body = await readJson(req, 4 * 1024);
+        return sendJson(res, 200, await ai.saveApiKey(body.apiKey));
+      }
+      if (method === "DELETE") return sendJson(res, 200, ai.deleteApiKey());
+    }
     if (parts[0] === "mode-manifest" && parts.length === 1 && method === "GET") {
       res.setHeader("Cache-Control", "no-store");
       return sendJson(res, 200, await ai.manifest(url.searchParams.get("lang") ?? ""));
