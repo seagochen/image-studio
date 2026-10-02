@@ -1,19 +1,19 @@
-import type { Point, Transform2D } from "../../../shared/canvas";
+import type { Point, Transform2D } from "../shared/canvas";
 import { createBrushSettings, type BrushSettings, type StrokeSample } from "./brushEngine";
 import {
   IMAGE_STUDIO_DOCUMENT_VERSION,
   MAX_SELECTION_MASK_RUNS,
   normalizeImageStudioDocument,
-} from "../../../../frontend/src/shared/imageStudioDocumentContract";
+} from "../shared/imageStudioDocumentContract";
 import {
   ADJUSTMENT_KINDS, ANNOTATION_ELEMENT_KINDS, LAYER_BLEND_MODES,
   type AdjustmentKind, type AnnotationElementKind, type LayerBlendMode,
-} from "../../../../frontend/src/shared/imageStudioDomain";
+} from "../shared/imageStudioDomain";
 
 export { IMAGE_STUDIO_DOCUMENT_VERSION, MAX_SELECTION_MASK_RUNS, ADJUSTMENT_KINDS, ANNOTATION_ELEMENT_KINDS, LAYER_BLEND_MODES };
 export type { AdjustmentKind, AnnotationElementKind, LayerBlendMode };
 
-export type { Point } from "../../../shared/canvas";
+export type { Point } from "../shared/canvas";
 
 export interface LayerTransform extends Transform2D {}
 

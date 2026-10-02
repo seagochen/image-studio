@@ -1,5 +1,5 @@
 import type { Point } from "./document";
-import { BRUSH_PRESET_IDS, type BrushPresetId } from "../../../../frontend/src/shared/imageStudioDomain";
+import { BRUSH_PRESET_IDS, type BrushPresetId } from "../shared/imageStudioDomain";
 
 export { BRUSH_PRESET_IDS };
 export type { BrushPresetId };

@@ -1,5 +1,5 @@
 import type { AiRunGateway, AiRunStatus } from "./types";
-import { appSessionHeaders } from "../../../shared/auth";
+import { appSessionHeaders } from "../shared/auth";
 
 export interface ImageMode {
   id: string;

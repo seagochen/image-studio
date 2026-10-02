@@ -10,10 +10,6 @@ Image Studio 是一个基于浏览器的分层图像编辑器（栅格 / 绘制 
 
 浏览器启动时读取 `/apps/image-studio/runtime-config.json` 决定模式；读取失败时直接报错，**不会**在两种模式之间自动回退。
 
-> [!NOTE]
-> 当前源码仍引用 skillsmaster 父仓库中的若干共享文件（`webapps/shared/*`、`frontend/src/shared/imageStudio*`、`icons.css`、`/icons.svg` 图标精灵、Jest DOM 环境）。
-> 这些文件纳入本仓库之前，`npm run build` / `docker build` 无法仅凭本仓库完成；服务端（`server/`）及其测试已可独立运行。
-
 ## 快速开始（独立模式）
 
 前置条件：Docker Engine 20.10+ 与 Docker Compose v2。
@@ -149,6 +145,8 @@ src/            前端（React + Konva）
   runtime/      运行模式契约（runtime-config.json）
   ai/           AI 适配器：httpGateway（平台）/ standaloneGateway（独立）
   projects/     项目客户端（两种模式共用同一套 /image-studio/projects 契约）
+  shared/       从 skillsmaster 迁入的共享模块：文档/AI 操作契约、资源限制、画布坐标、语言、平台鉴权
+public/icons.svg  产品图标精灵（独立模式由容器在 /icons.svg 提供）
 server/         容器服务端：静态资源、/healthz、本地项目 API（node:sqlite）、AI 代理
 config/         运行时配置示例（standalone.json / platform.json）
 docker-compose.yml, .env.example   独立模式的端口与卷映射

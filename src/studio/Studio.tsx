@@ -22,7 +22,7 @@ import {
   insertLayerAfter, liftSelectedVectorLayer, moveLayer, patchLayer, replaceAdjacentLayers, replaceLastStroke, replaceRasterLayer, replaceRasterPixels,
   selectLayer, setLayerTransform, replaceAnnotationElement,
 } from "../domain/commands";
-import { clampPoint, screenToStage, stageToImage } from "../../../shared/canvas";
+import { clampPoint, screenToStage, stageToImage } from "../shared/canvas";
 import { colorSchemeSwatches, hexToHsv, hsvToHex, COLOR_SCHEME_KINDS, type ColorSchemeKind } from "../domain/color";
 import {
   canvasBlendMode, createEmptyDocument, createId, LAYER_BLEND_MODES, rasterSourceUrl,

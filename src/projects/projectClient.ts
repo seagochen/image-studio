@@ -1,6 +1,6 @@
 import { cloneDocument, parseDocument, type ImageStudioDocument, type RasterLayer } from "../domain/document";
 import type { AiOperation } from "../ai/types";
-import { parseImageStudioAiOperation } from "../../../../frontend/src/shared/imageStudioAiOperationContract";
+import { parseImageStudioAiOperation } from "../shared/imageStudioAiOperationContract";
 
 export interface ProjectSummary {
   id: string;

@@ -1,10 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { requireUser } from "../../shared/auth";
+import { requireUser } from "./shared/auth";
 import { Studio } from "./studio/Studio";
 import { APP_BASE_PATH, loadRuntimeConfig } from "./runtime/runtimeConfig";
 import "./styles.css";
-import "../../../frontend/src/public/styles/icons.css";
+import "./shared/icons.css";
 
 async function start(): Promise<void> {
   const root = document.getElementById("root");
