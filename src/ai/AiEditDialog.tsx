@@ -4,7 +4,8 @@ import type { PixelSelection } from "../studio/tools";
 import { maskInputFromLayer, maskInputFromSelection } from "./maskInput";
 import type { DecodedImage } from "../domain/importImage";
 import { AiEditOrchestrator } from "./orchestrator";
-import { fetchImageModes, HttpAiRunGateway, IMAGE_STUDIO_AI_OUTPUT_FORMAT, type ImageMode } from "./httpGateway";
+import { fetchImageModes, IMAGE_STUDIO_AI_OUTPUT_FORMAT, type ImageMode } from "./httpGateway";
+import { createAiRunGateway, modeManifestUrl } from "./gatewayForMode";
 import type { AiOperation } from "./types";
 import { completeImageStudioAiOperation } from "../projects/projectClient";
 import type { MessageKey } from "../i18n";
@@ -38,7 +39,7 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
   const controllerRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const orchestrator = useMemo(() => new AiEditOrchestrator({ gateway: new HttpAiRunGateway(), currentRevision }), [currentRevision]);
+  const orchestrator = useMemo(() => new AiEditOrchestrator({ gateway: createAiRunGateway(), currentRevision }), [currentRevision]);
   const selectedMode = modes.find((mode) => mode.id === modeId);
   // Both local boundaries must constrain the submitted image mask.
   const hasMaskInput = Boolean(pixelSelection || maskLayer);
@@ -51,7 +52,7 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchImageModes(language, controller.signal).then((available) => {
+    fetchImageModes(language, controller.signal, modeManifestUrl()).then((available) => {
       setModes(available);
       setModeId(initialOperation?.mode ?? available[0]?.id ?? "");
       if (initialOperation) setParameters(initialOperation.parameters);

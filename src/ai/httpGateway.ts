@@ -20,9 +20,14 @@ export interface ImageMode {
 
 export const IMAGE_STUDIO_AI_OUTPUT_FORMAT = "png";
 
-export async function fetchImageModes(language: string, signal?: AbortSignal): Promise<ImageMode[]> {
-  const response = await fetch(`/mode-manifest?lang=${encodeURIComponent(language)}`, { signal });
-  if (!response.ok) throw new Error(`Mode manifest request failed: ${response.status}`);
+export const PLATFORM_MODE_MANIFEST_URL = "/mode-manifest";
+
+export async function fetchImageModes(language: string, signal?: AbortSignal, manifestUrl = PLATFORM_MODE_MANIFEST_URL): Promise<ImageMode[]> {
+  const response = await fetch(`${manifestUrl}?lang=${encodeURIComponent(language)}`, { signal });
+  if (!response.ok) {
+    const failure = await safeJson(response);
+    throw new Error(typeof failure.detail === "string" ? failure.detail : `Mode manifest request failed: ${response.status}`);
+  }
   const manifest = await response.json() as { modes?: Record<string, any>; fields?: Record<string, any> };
   return Object.entries(manifest.modes ?? {}).flatMap(([id, mode]) => {
     const maskField = mode.secondary?.field === "mask_file" && mode.secondary?.mediaKind === "image" ? "mask_file" : undefined;

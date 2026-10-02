@@ -67,6 +67,7 @@ import { ProductIcon, type ProductIconName } from "./ProductIcon";
 import { ToolRail } from "./ToolRail";
 import { Inspector, type InspectorTab } from "./Inspector";
 import { LayerPanel } from "./LayerPanel";
+import { APP_BASE_PATH, isStandaloneMode } from "../runtime/runtimeConfig";
 
 const MAX_DIRECT_PIXEL_COUNT = 4096 * 4096;
 
@@ -415,10 +416,12 @@ export function Studio(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [saveToast]);
 
+  // Standalone installs have no skillsmaster dashboard, account or support-ticket pages.
+  const standalone = isStandaloneMode();
   return (
     <div className="studio-shell">
       <header className="studio-header">
-        <a className="studio-brand" href="/dashboard">
+        <a className="studio-brand" href={standalone ? APP_BASE_PATH : "/dashboard"}>
           <ProductIcon name="image" className="brand-mark" />
           <span className="brand-label">{t("title")}</span>
         </a>
@@ -439,11 +442,13 @@ export function Studio(): JSX.Element {
             <ProductIcon name="save" />
             <span>{persistence === "saving" ? t("saving") : t("save")}</span>
           </button>
-          <span className="header-divider" aria-hidden="true" />
-          <button className="ticket-button" aria-label={t("submitTicket")} title={t("submitTicket")} onClick={() => { window.location.href = "/account?view=issues&issueView=new"; }}>
-            <ProductIcon name="ticket" />
-            <span>{t("submitTicket")}</span>
-          </button>
+          {!standalone && <>
+            <span className="header-divider" aria-hidden="true" />
+            <button className="ticket-button" aria-label={t("submitTicket")} title={t("submitTicket")} onClick={() => { window.location.href = "/account?view=issues&issueView=new"; }}>
+              <ProductIcon name="ticket" />
+              <span>{t("submitTicket")}</span>
+            </button>
+          </>}
           <span className="header-divider" aria-hidden="true" />
           <span className="lang-picker">
             <ProductIcon name="globe" />
@@ -451,10 +456,10 @@ export function Studio(): JSX.Element {
               <option value="ja">日本語</option><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option>
             </select>
           </span>
-          <a className="button account-link" href="/account">
+          {!standalone && <a className="button account-link" href="/account">
             <ProductIcon name="user" />
             <span className="account-label">{t("account")}</span>
-          </a>
+          </a>}
         </div>
       </header>
       {fileBusy && <div className="studio-warning" role="status">{fileCopy[locale].busy}</div>}

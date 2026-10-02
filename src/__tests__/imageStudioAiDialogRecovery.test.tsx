@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { AiEditDialog } from "../ai/AiEditDialog";
 import type { AiOperation } from "../ai/types";
 import { rasterLayerFromImage } from "../domain/importImage";
+import { setRuntimeConfigForTests } from "../runtime/runtimeConfig";
 
 jest.mock("../ai/httpGateway", () => ({
   fetchImageModes: jest.fn(async () => [{ id: "denoise", label: "Denoise", fields: [] }]),
@@ -23,12 +24,14 @@ describe("Image Studio AI result recovery dialog", () => {
     document.body.append(host);
     root = createRoot(host);
     (globalThis as any).__imageStudioAiResult = jest.fn();
+    setRuntimeConfigForTests({ mode: "platform", aiAvailable: true });
   });
 
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
     delete (globalThis as any).__imageStudioAiResult;
+    setRuntimeConfigForTests(null);
   });
 
   const renderRecoverable = async () => {
