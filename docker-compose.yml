@@ -1,0 +1,35 @@
+# Standalone Image Studio. Usage:
+#   cp .env.example .env && mkdir -p data/db data/storage secrets
+#   docker compose up -d --build
+#   open http://localhost:3000
+#
+# All host-side mappings (port, database folder, storage folder, config file, secrets)
+# come from .env; container-side paths come from the mounted config file.
+services:
+  image-studio:
+    build: .
+    image: image-studio:local
+    restart: unless-stopped
+    user: "${IMAGE_STUDIO_UID:-1000}:${IMAGE_STUDIO_GID:-1000}"
+    environment:
+      IMAGE_STUDIO_CONFIG: /etc/image-studio/config.json
+    ports:
+      - "${IMAGE_STUDIO_BIND_ADDRESS:-127.0.0.1}:${IMAGE_STUDIO_HOST_PORT:-3000}:${IMAGE_STUDIO_CONTAINER_PORT:-80}"
+    # Lets the unprivileged user bind port 80 inside the container.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    volumes:
+      - type: bind
+        source: ${IMAGE_STUDIO_CONFIG_FILE:-./config/standalone.json}
+        target: /etc/image-studio/config.json
+        read_only: true
+      - type: bind
+        source: ${IMAGE_STUDIO_DB_DIR:-./data/db}
+        target: /var/lib/image-studio/db
+      - type: bind
+        source: ${IMAGE_STUDIO_STORAGE_DIR:-./data/storage}
+        target: /var/lib/image-studio/storage
+      - type: bind
+        source: ${IMAGE_STUDIO_SECRETS_DIR:-./secrets}
+        target: /run/secrets/image-studio
+        read_only: true

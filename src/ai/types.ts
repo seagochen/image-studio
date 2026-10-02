@@ -1,4 +1,4 @@
-import type { ImageStudioAiOperationStatus } from "../../../../frontend/src/shared/imageStudioAiOperationContract";
+import type { ImageStudioAiOperationStatus } from "../shared/imageStudioAiOperationContract";
 
 export type AiOperationStatus = ImageStudioAiOperationStatus;
 

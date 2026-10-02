@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from "react";
 import type Konva from "konva";
 import type { Locale, MessageKey } from "../i18n";
-import { clampPoint, imageToStage, screenToStage, stageToImage, type Viewport } from "../../../shared/canvas";
+import { clampPoint, imageToStage, screenToStage, stageToImage, type Viewport } from "../shared/canvas";
 import { layerAncestors } from "../domain/layerHierarchy";
 import { addLayer, addSelectionMaskedLocalLayer, addStroke, createAnnotationLayer, replaceLastStroke, replaceRasterPixels } from "../domain/commands";
 import {

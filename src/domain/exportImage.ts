@@ -4,7 +4,7 @@ import { renderDrawingLayer, renderAnnotationLayer } from "./layerRasterization"
 export { renderDrawingLayer } from "./layerRasterization";
 import { adjustmentKernel, ADJUSTMENT_CHUNK_PIXELS, applySpatialAdjustment, isSpatialAdjustment, spatialRadius, yieldRenderTask } from "./adjustmentEngine";
 import { adjacentMaskLayerIds } from "./adjustmentMasking";
-import { MAX_CANVAS_EDGE } from "../../../../frontend/src/shared/imageStudioDomain";
+import { MAX_CANVAS_EDGE } from "../shared/imageStudioDomain";
 import { RenderMemoryBudget, releaseRenderCanvas, reserveRenderBytes, type RenderMemoryUsage } from "./renderMemory";
 import { estimateRenderPeak, MASK_CHUNK_PIXELS, SPATIAL_WORK_BYTES_PER_PIXEL } from "./exportMemoryPlan";
 

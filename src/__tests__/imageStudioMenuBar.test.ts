@@ -6,12 +6,12 @@ describe("Image Studio desktop menu bar", () => {
   const menu = readFileSync(resolve(__dirname, "../studio/FileMenu.tsx"), "utf8");
   const studio = readFileSync(resolve(__dirname, "../studio/Studio.tsx"), "utf8");
 
-  it("provides localized File, Edit and View top-level menus", () => {
-    expect(fileCopy.en).toMatchObject({ file: "File", edit: "Edit", view: "View" });
-    expect(fileCopy.ja).toMatchObject({ file: "ファイル", edit: "編集", view: "表示" });
-    expect(fileCopy["zh-CN"]).toMatchObject({ file: "文件", edit: "编辑", view: "视图" });
-    expect(fileCopy["zh-TW"]).toMatchObject({ file: "檔案", edit: "編輯", view: "檢視" });
-    expect(menu).toContain('const MENUS: MenuName[] = ["file", "edit", "view"]');
+  it("provides localized File, Edit, View and Settings top-level menus", () => {
+    expect(fileCopy.en).toMatchObject({ file: "File", edit: "Edit", view: "View", settings: "Settings" });
+    expect(fileCopy.ja).toMatchObject({ file: "ファイル", edit: "編集", view: "表示", settings: "設定" });
+    expect(fileCopy["zh-CN"]).toMatchObject({ file: "文件", edit: "编辑", view: "视图", settings: "设置" });
+    expect(fileCopy["zh-TW"]).toMatchObject({ file: "檔案", edit: "編輯", view: "檢視", settings: "設定" });
+    expect(menu).toContain('const MENUS: MenuName[] = ["file", "edit", "view", "settings"]');
     expect(menu).toContain('role="menubar"');
   });
 
@@ -36,6 +36,11 @@ describe("Image Studio desktop menu bar", () => {
     expect(fileCopy.en).toMatchObject({ importImage: "Image (PNG, JPG)", importOpenRaster: "OpenRaster (.ora)" });
     expect(fileCopy["zh-CN"]).toMatchObject({ importImage: "图片（PNG、JPG）", importOpenRaster: "OpenRaster（.ora）" });
     expect(studio).toContain('<span>{t("submitTicket")}</span>');
+  });
+
+  it("offers the API Key settings only in standalone mode", () => {
+    expect(menu).toContain('{props.onApiKey && row("key", t.apiKey, props.onApiKey)}');
+    expect(studio).toContain("onApiKey={standalone ? () => setApiKeyOpen(true) : undefined}");
   });
 
   it("reports manual save results with a five-second toast", () => {

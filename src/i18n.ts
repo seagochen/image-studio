@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { persistLocale, storedLocale, type Locale } from "../../shared/locale";
-export type { Locale } from "../../shared/locale";
+import { persistLocale, storedLocale, type Locale } from "./shared/locale";
+export type { Locale } from "./shared/locale";
 
 const coreLabelsEn = {
   addLayerMask: "Add layer mask",

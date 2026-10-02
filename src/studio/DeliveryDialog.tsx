@@ -3,7 +3,7 @@ import { exportFilename, exportImage, planExport } from "../domain/exportImage";
 import type { ImageStudioDocument } from "../domain/document";
 import { exportOpenRaster } from "../projects/openRaster";
 import type { DeliveryFormat } from "./FileMenu";
-import { MAX_CANVAS_EDGE } from "../../../../frontend/src/shared/imageStudioDomain";
+import { MAX_CANVAS_EDGE } from "../shared/imageStudioDomain";
 import type { FileCopy } from "./fileCopy";
 import type { MessageKey } from "../i18n";
 import { trapDialogFocus } from "./dialogFocus";

@@ -3,7 +3,7 @@ import type { ConventionalEditorInput, ConventionalEditorOutcome } from "../adap
 import { fullImageQuad, validOutputSize, validQuad, warpPerspective, type Pixels, type Quad } from "../domain/perspective";
 import { trapDialogFocus } from "./dialogFocus";
 import { perspectiveCopy } from "./perspectiveCopy";
-import { MAX_CANVAS_EDGE } from "../../../../frontend/src/shared/imageStudioDomain";
+import { MAX_CANVAS_EDGE } from "../shared/imageStudioDomain";
 import type { Locale } from "../i18n";
 
 interface Props { input: ConventionalEditorInput; language: Locale; onComplete: (outcome: ConventionalEditorOutcome) => void }

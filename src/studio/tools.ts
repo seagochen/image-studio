@@ -1,6 +1,6 @@
 import type { PixelSelectionMask } from "../domain/pixelTools";
 import type { ProductIconName } from "./ProductIcon";
-import type { Locale } from "../../../shared/locale";
+import type { Locale } from "../shared/locale";
 
 /**
  * Tool catalog shared between Studio.tsx's toolbar rendering and the pointer

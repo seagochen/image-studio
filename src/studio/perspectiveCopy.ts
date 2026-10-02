@@ -1,4 +1,4 @@
-import type { Locale } from "../../../shared/locale";
+import type { Locale } from "../shared/locale";
 
 const en = { title: "Perspective correction", hint: "Drag corners in order: top left, top right, bottom right, bottom left. Output is added as a new layer.", source: "Source corners", preview: "Corrected preview", width: "Width", height: "Height", reset: "Reset", cancel: "Cancel", apply: "Add corrected layer", loading: "Loading…", working: "Processing", invalid: "Choose a convex, non-crossing quadrilateral and integer output dimensions (up to 40 MP / 16,384 px per edge).", failed: "Could not process this image. Try a smaller output or reopen the tool.", corner: "Corner" };
 

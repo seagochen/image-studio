@@ -1,5 +1,5 @@
 import { createId, defaultTransform, type ImageStudioDocument, type RasterLayer } from "./document";
-import { MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS } from "../../../../frontend/src/shared/imageStudioDomain";
+import { MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS } from "../shared/imageStudioDomain";
 
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 export const MAX_IMAGE_PIXELS = MAX_CANVAS_PIXELS;

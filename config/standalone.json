@@ -1,0 +1,23 @@
+{
+  "mode": "standalone",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 80
+  },
+  "storage": {
+    "databasePath": "/var/lib/image-studio/db/image-studio.sqlite",
+    "dataDir": "/var/lib/image-studio/storage",
+    "maxUploadBytes": 26214400,
+    "maxDocumentBytes": 8388608
+  },
+  "access": {
+    "basicAuth": null
+  },
+  "ai": {
+    "enabled": true,
+    "baseUrl": "https://api.skillsmaster.jp",
+    "manifestPath": "/mode-manifest",
+    "runsPath": "/v1/runs",
+    "requestTimeoutMs": 60000
+  }
+}
