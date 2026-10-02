@@ -1,23 +1,35 @@
-# Build from the repository root so the app can consume the platform's shared
-# TypeScript contracts without copying any server implementation into the image:
-# docker build -f webapps/image-studio/Dockerfile -t skillsmaster-app-image-studio .
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
-WORKDIR /workspace/webapps
+# Image Studio — one image for both runtime modes (Issue #1).
+#
+#   docker build -t image-studio .
+#
+# Platform mode (default; mounted by skillsmaster under /apps/image-studio/*):
+#   static assets + /healthz + /runtime-config.json on port 8080, no volumes, no keys.
+# Standalone mode: see docker-compose.yml and config/standalone.json.
 
-COPY webapps/package*.json ./
+FROM node:22-alpine AS builder
+WORKDIR /workspace
+COPY package.json package-lock.json ./
 RUN npm ci
-COPY webapps ./
-COPY frontend/src/shared /workspace/frontend/src/shared
-COPY frontend/src/public/styles/icons.css /workspace/frontend/src/public/styles/icons.css
-RUN npm run build:image-studio
+COPY . .
+RUN npm run build
 
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS production
-COPY webapps/image-studio/nginx.conf /etc/nginx/nginx.conf
-COPY --from=builder --chown=nginx:nginx /workspace/webapps/image-studio/dist /usr/share/nginx/html
+FROM node:22-alpine AS production
+ENV NODE_ENV=production \
+    IMAGE_STUDIO_MODE=platform \
+    IMAGE_STUDIO_STATIC_DIR=/app/dist
+WORKDIR /app
+COPY --chown=root:root server ./server
+RUN rm -rf ./server/__tests__
+COPY --from=builder --chown=root:root /workspace/dist ./dist
+COPY --chown=root:root module.json ./module.json
 
-USER nginx
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+# Standalone volumes are mounted here; created owned by the unprivileged runtime user.
+RUN mkdir -p /var/lib/image-studio/db /var/lib/image-studio/storage \
+ && chown -R node:node /var/lib/image-studio
 
-CMD ["nginx", "-g", "daemon off;"]
+USER node
+EXPOSE 8080 80
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["node", "/app/server/healthcheck.mjs"]
+
+CMD ["node", "--disable-warning=ExperimentalWarning", "/app/server/index.mjs"]
