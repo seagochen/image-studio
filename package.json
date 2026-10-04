@@ -15,7 +15,9 @@
     "test": "npm run test:server && npm run test:web",
     "test:web": "jest",
     "test:server": "node --disable-warning=ExperimentalWarning --test server/__tests__/*.test.mjs",
-    "start": "node --disable-warning=ExperimentalWarning server/index.mjs"
+    "start": "node --disable-warning=ExperimentalWarning server/index.mjs",
+    "backup": "node --disable-warning=ExperimentalWarning server/backup.mjs",
+    "check:bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.2",

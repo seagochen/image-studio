@@ -4,7 +4,10 @@
 #
 # Platform mode (default; mounted by skillsmaster under /apps/image-studio/*):
 #   static assets + /healthz + /runtime-config.json on port 8080, no volumes, no keys.
-# Standalone mode: see docker-compose.yml and config/standalone.json.
+#   Runs as 101:101 and needs no writable path, so it works with a read-only root
+#   filesystem (docker run --read-only).
+# Standalone mode: see docker-compose.yml and config/standalone.json; all data lives
+#   under the /data volume (/data/db for SQLite, /data/storage for files).
 
 FROM node:22-alpine AS builder
 WORKDIR /workspace
@@ -23,11 +26,14 @@ RUN rm -rf ./server/__tests__
 COPY --from=builder --chown=root:root /workspace/dist ./dist
 COPY --chown=root:root module.json ./module.json
 
-# Standalone volumes are mounted here; created owned by the unprivileged runtime user.
-RUN mkdir -p /var/lib/image-studio/db /var/lib/image-studio/storage \
- && chown -R node:node /var/lib/image-studio
+# Unprivileged runtime user expected by the skillsmaster module runtime.
+RUN addgroup -S -g 101 imagestudio \
+ && adduser -S -D -H -u 101 -G imagestudio -s /sbin/nologin imagestudio \
+ && mkdir -p /data/db /data/storage \
+ && chown -R 101:101 /data
 
-USER node
+VOLUME ["/data"]
+USER 101:101
 EXPOSE 8080 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["node", "/app/server/healthcheck.mjs"]
