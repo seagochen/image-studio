@@ -14,6 +14,8 @@ async function main() {
     const { openStore } = await import("./store.mjs");
     const { createAiProxy } = await import("./aiProxy.mjs");
     store = openStore(config.storage);
+    const recovered = store.recover({ idempotentSubmit: config.ai.idempotentSubmit === true });
+    if (Object.values(recovered).some(Boolean)) log(`startup recovery ${JSON.stringify(recovered)}`);
     ai = createAiProxy({ ai: config.ai, store });
   }
 
@@ -23,7 +25,7 @@ async function main() {
     log(`image-studio listening on ${config.server.host}:${config.server.port} (mode=${config.mode})`);
     if (config.mode === "standalone") {
       log(`database=${config.storage.databasePath} storage=${config.storage.dataDir} ai=${config.ai.enabled ? "enabled" : "disabled"}`
-        + ` access=${config.access.basicAuth ? "basic-auth" : "open"}`);
+        + ` access=${[config.access.token && "token", config.access.basicAuth && "basic-auth"].filter(Boolean).join("+") || "localhost-only"}`);
     }
   });
 

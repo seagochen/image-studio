@@ -4,3 +4,4 @@ node_modules/
 data/
 secrets/*
 !secrets/.gitkeep
+release/

@@ -28,6 +28,8 @@ export const DEFAULT_SKILLSMASTER_BASE_URL = "https://api.skillsmaster.jp";
 export const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const DEFAULT_MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 
+export const MIN_ACCESS_TOKEN_LENGTH = 32;
+
 export class ConfigError extends Error {}
 
 /** Loads and validates configuration from the process environment. */
@@ -70,6 +72,7 @@ export function normalizeConfig(raw, env = {}) {
     for (const key of ["storage", "ai", "access"]) {
       if (raw[key] !== undefined && raw[key] !== null) throw new ConfigError(`"${key}" is not allowed in platform mode`);
     }
+    if (env.IMAGE_STUDIO_ACCESS_TOKEN_FILE) throw new ConfigError("Platform mode must not be given an access token; the platform owns authentication");
     if (env.SKILLSMASTER_CUSTOMER_KEY || env.SKILLSMASTER_CUSTOMER_KEY_FILE) {
       throw new ConfigError("Platform mode must not be given a skillsmaster customer key");
     }
@@ -77,8 +80,8 @@ export function normalizeConfig(raw, env = {}) {
   }
 
   const storage = objectOrEmpty(raw.storage, "storage");
-  const databasePath = path.resolve(string(storage.databasePath ?? "/var/lib/image-studio/db/image-studio.sqlite", "storage.databasePath"));
-  const dataDir = path.resolve(string(storage.dataDir ?? "/var/lib/image-studio/storage", "storage.dataDir"));
+  const databasePath = path.resolve(string(storage.databasePath ?? "/data/db/image-studio.sqlite", "storage.databasePath"));
+  const dataDir = path.resolve(string(storage.dataDir ?? "/data/storage", "storage.dataDir"));
   const maxUploadBytes = integer(storage.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES, "storage.maxUploadBytes", 1024, 512 * 1024 * 1024);
   const maxDocumentBytes = integer(storage.maxDocumentBytes ?? DEFAULT_MAX_DOCUMENT_BYTES, "storage.maxDocumentBytes", 1024, 256 * 1024 * 1024);
 
@@ -90,6 +93,22 @@ export function normalizeConfig(raw, env = {}) {
     const passwordFile = string(auth.passwordFile, "access.basicAuth.passwordFile");
     const password = readSecretFile(passwordFile, "access.basicAuth.passwordFile");
     basicAuth = Object.freeze({ username, password });
+  }
+  // Remote access token: browsers exchange it once for an HttpOnly session cookie,
+  // scripts send it as `Authorization: Bearer <token>`.
+  let token = null;
+  const tokenFile = env.IMAGE_STUDIO_ACCESS_TOKEN_FILE ?? access.tokenFile;
+  if (tokenFile) {
+    token = readSecretFile(string(tokenFile, "access.tokenFile"), "access.tokenFile");
+    if (token.length < MIN_ACCESS_TOKEN_LENGTH) throw new ConfigError(`access.tokenFile must contain at least ${MIN_ACCESS_TOKEN_LENGTH} characters`);
+  }
+  const sessionHours = integer(access.sessionHours ?? 12, "access.sessionHours", 1, 24 * 30);
+  const secureCookie = boolean(access.secureCookie ?? false, "access.secureCookie");
+  // Without access control only loopback Host names are served. Extra names are for a
+  // trusted reverse proxy that performs its own authentication.
+  const allowedHosts = access.allowedHosts ?? [];
+  if (!Array.isArray(allowedHosts) || allowedHosts.some((host) => typeof host !== "string" || !host.trim())) {
+    throw new ConfigError('"access.allowedHosts" must be an array of host names');
   }
 
   // AI is on by default and talks to skillsmaster.jp. The customer key either comes from
@@ -116,6 +135,10 @@ export function normalizeConfig(raw, env = {}) {
       manifestPath: string(ai.manifestPath ?? "/mode-manifest", "ai.manifestPath"),
       runsPath: string(ai.runsPath ?? "/v1/runs", "ai.runsPath"),
       requestTimeoutMs: integer(ai.requestTimeoutMs ?? 60_000, "ai.requestTimeoutMs", 1000, 600_000),
+      // Set true only after confirming that the skillsmaster runs API deduplicates
+      // submissions by Idempotency-Key. Otherwise a submission whose outcome is unknown
+      // (timeout, crash, 5xx) is never resent automatically.
+      idempotentSubmit: boolean(ai.idempotentSubmit ?? false, "ai.idempotentSubmit"),
     });
   }
 
@@ -123,7 +146,10 @@ export function normalizeConfig(raw, env = {}) {
     mode,
     server: Object.freeze({ port, host, staticDir }),
     storage: Object.freeze({ databasePath, dataDir, maxUploadBytes, maxDocumentBytes }),
-    access: Object.freeze({ basicAuth }),
+    access: Object.freeze({
+      basicAuth, token, sessionHours, secureCookie,
+      allowedHosts: Object.freeze(allowedHosts.map((host) => host.trim().toLowerCase())),
+    }),
     ai: aiConfig,
   });
 }
@@ -141,6 +167,11 @@ function readSecretFile(file, label) {
   try { value = fs.readFileSync(file, "utf8").trim(); }
   catch (error) { throw new ConfigError(`Cannot read ${label} (${file}): ${error.message}`); }
   if (!value) throw new ConfigError(`${label} (${file}) is empty`);
+  return value;
+}
+
+function boolean(value, label) {
+  if (typeof value !== "boolean") throw new ConfigError(`"${label}" must be true or false`);
   return value;
 }
 

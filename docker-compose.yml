@@ -25,10 +25,10 @@ services:
         read_only: true
       - type: bind
         source: ${IMAGE_STUDIO_DB_DIR:-./data/db}
-        target: /var/lib/image-studio/db
+        target: /data/db
       - type: bind
         source: ${IMAGE_STUDIO_STORAGE_DIR:-./data/storage}
-        target: /var/lib/image-studio/storage
+        target: /data/storage
       - type: bind
         source: ${IMAGE_STUDIO_SECRETS_DIR:-./secrets}
         target: /run/secrets/image-studio

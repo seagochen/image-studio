@@ -5,12 +5,13 @@
     "port": 80
   },
   "storage": {
-    "databasePath": "/var/lib/image-studio/db/image-studio.sqlite",
-    "dataDir": "/var/lib/image-studio/storage",
+    "databasePath": "/data/db/image-studio.sqlite",
+    "dataDir": "/data/storage",
     "maxUploadBytes": 26214400,
     "maxDocumentBytes": 8388608
   },
   "access": {
+    "tokenFile": null,
     "basicAuth": null
   },
   "ai": {
@@ -18,6 +19,7 @@
     "baseUrl": "https://api.skillsmaster.jp",
     "manifestPath": "/mode-manifest",
     "runsPath": "/v1/runs",
-    "requestTimeoutMs": 60000
+    "requestTimeoutMs": 60000,
+    "idempotentSubmit": false
   }
 }

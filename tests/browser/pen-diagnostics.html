@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Image Studio pen diagnostics</title>
+<!--
+  Real-device acceptance helper for issue #3 (see docs/pen-acceptance.md).
+  Serve with `npx vite --host` and open
+  http://<host>:5173/apps/image-studio/tests/browser/pen-diagnostics.html on the device.
+  Every pointer sample goes through the editor's own pointerSamples() normalization, so
+  the report shows both what the browser delivered and what the brush engine will use.
+-->
+<style>
+  :root { color-scheme: light dark; font: 13px/1.4 system-ui, sans-serif; }
+  body { margin: 0; display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+  header, footer { padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  header input { width: 14em; }
+  #pad { touch-action: none; background: Canvas; border-block: 1px solid GrayText; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  #summary { font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; margin: 0; max-height: 30vh; overflow: auto; flex: 1 1 100%; }
+  .warn { color: #c2410c; }
+</style>
+<header>
+  <label>Device <input id="device" placeholder="e.g. Wacom Intuos Pro M"></label>
+  <label>Driver <input id="driver" placeholder="driver / OS input stack"></label>
+  <label>Scenario <select id="scenario">
+    <option>pressure sweep</option><option>fast strokes</option><option>out-of-bounds capture</option>
+    <option>long airbrush hold</option><option>lift and re-enter</option><option>tilt and twist</option>
+    <option>mouse fallback</option><option>touch fallback</option>
+  </select></label>
+  <button id="clear">Clear</button>
+  <button id="download">Download report</button>
+</header>
+<canvas id="pad"></canvas>
+<footer><pre id="summary">Draw on the canvas with the device under test.</pre></footer>
+<script type="module">
+  import { pointerSamples } from "../../src/domain/brushEngine.ts";
+
+  const GAP_PX = 40;          // distance between consecutive samples that reads as a broken line
+  const GAP_MS = 120;         // time between consecutive samples of a held stroke
+  const PRESSURE_JUMP = .4;   // pressure change between consecutive samples
+
+  const canvas = document.getElementById("pad");
+  const context = canvas.getContext("2d");
+  const summary = document.getElementById("summary");
+  const strokes = [];
+  let active = null;
+
+  function resize() {
+    const ratio = devicePixelRatio || 1;
+    const box = canvas.getBoundingClientRect();
+    canvas.width = Math.round(box.width * ratio);
+    canvas.height = Math.round(box.height * ratio);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    redraw();
+  }
+
+  function local(event) {
+    const box = canvas.getBoundingClientRect();
+    return { x: event.clientX - box.left, y: event.clientY - box.top };
+  }
+
+  function rawFields(event) {
+    return {
+      type: event.type, pointerType: event.pointerType, pointerId: event.pointerId, isPrimary: event.isPrimary,
+      buttons: event.buttons, pressure: event.pressure, tangentialPressure: event.tangentialPressure,
+      tiltX: event.tiltX, tiltY: event.tiltY, twist: event.twist,
+      altitudeAngle: event.altitudeAngle ?? null, azimuthAngle: event.azimuthAngle ?? null,
+      width: event.width, height: event.height, timeStamp: Math.round(event.timeStamp * 10) / 10,
+      coalesced: event.getCoalescedEvents?.().length ?? null,
+      captured: canvas.hasPointerCapture?.(event.pointerId) ?? null,
+    };
+  }
+
+  function record(event) {
+    if (!active || event.pointerId !== active.pointerId) return;
+    const samples = pointerSamples(event, local(event));
+    const previous = active.samples[active.samples.length - 1];
+    for (const sample of samples) {
+      const last = active.samples[active.samples.length - 1];
+      if (last) {
+        const distance = Math.hypot(sample.x - last.x, sample.y - last.y);
+        const elapsed = sample.time - last.time;
+        if (distance > GAP_PX || elapsed > GAP_MS) active.gaps.push({ at: active.samples.length, distance: Math.round(distance), elapsed: Math.round(elapsed) });
+        if (Math.abs(sample.pressure - last.pressure) > PRESSURE_JUMP) active.pressureJumps.push({ at: active.samples.length, from: last.pressure, to: sample.pressure });
+      }
+      active.samples.push(sample);
+    }
+    active.events.push(rawFields(event));
+    const box = canvas.getBoundingClientRect();
+    if (event.clientX < box.left || event.clientY < box.top || event.clientX > box.right || event.clientY > box.bottom) active.outsideSamples += 1;
+    drawSegment(previous, samples);
+  }
+
+  function drawSegment(previous, samples) {
+    context.strokeStyle = getComputedStyle(document.body).color;
+    context.lineCap = "round";
+    let from = previous;
+    for (const sample of samples) {
+      if (from) {
+        context.lineWidth = .5 + sample.pressure * 14;
+        context.beginPath();
+        context.moveTo(from.x, from.y);
+        context.lineTo(sample.x, sample.y);
+        context.stroke();
+      }
+      from = sample;
+    }
+  }
+
+  function redraw() {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    for (const stroke of strokes) drawSegment(null, stroke.samples);
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    let captureFailed = false;
+    // Throws when the pointer is already gone (or for synthetic events); record it instead.
+    try { canvas.setPointerCapture(event.pointerId); } catch { captureFailed = true; }
+    active = {
+      scenario: document.getElementById("scenario").value, pointerType: event.pointerType, pointerId: event.pointerId,
+      startedAt: new Date().toISOString(), samples: [], events: [], gaps: [], pressureJumps: [], outsideSamples: 0,
+      captureFailed, captureLost: false, endedBy: null,
+    };
+    strokes.push(active);
+    record(event);
+  });
+  canvas.addEventListener("pointermove", record);
+  canvas.addEventListener("pointerrawupdate", (event) => { if (active) active.rawUpdates = (active.rawUpdates ?? 0) + 1; });
+  canvas.addEventListener("lostpointercapture", (event) => { if (active && event.pointerId === active.pointerId) active.captureLost = true; });
+  for (const type of ["pointerup", "pointercancel"]) {
+    canvas.addEventListener(type, (event) => {
+      if (!active || event.pointerId !== active.pointerId) return;
+      record(event);
+      active.endedBy = type;
+      active = null;
+      render();
+    });
+  }
+  canvas.addEventListener("pointermove", () => { if (active && active.samples.length % 20 === 0) render(); });
+
+  function strokeSummary(stroke) {
+    const pressures = stroke.samples.map((sample) => sample.pressure);
+    const raw = stroke.events;
+    const duration = stroke.samples.length > 1 ? stroke.samples[stroke.samples.length - 1].time - stroke.samples[0].time : 0;
+    return {
+      scenario: stroke.scenario, pointerType: stroke.pointerType, endedBy: stroke.endedBy, samples: stroke.samples.length,
+      events: raw.length, durationMs: Math.round(duration), samplesPerSecond: duration ? Math.round(stroke.samples.length / duration * 1000) : null,
+      pressure: { min: Math.min(...pressures), max: Math.max(...pressures), rawZeroOrMissing: raw.filter((e) => !(e.pressure > 0)).length },
+      tiltReported: raw.some((e) => e.tiltX !== 0 || e.tiltY !== 0), twistReported: raw.some((e) => e.twist !== 0),
+      altitudeReported: raw.some((e) => e.altitudeAngle !== null), coalescedSupported: raw.some((e) => e.coalesced !== null),
+      maxCoalesced: Math.max(0, ...raw.map((e) => e.coalesced ?? 0)), rawUpdates: stroke.rawUpdates ?? 0,
+      outsideSamples: stroke.outsideSamples, captureFailed: stroke.captureFailed, captureLost: stroke.captureLost, gaps: stroke.gaps.length, pressureJumps: stroke.pressureJumps.length,
+    };
+  }
+
+  function environment() {
+    return {
+      userAgent: navigator.userAgent, platform: navigator.userAgentData?.platform ?? navigator.platform,
+      maxTouchPoints: navigator.maxTouchPoints, devicePixelRatio, pointerRawUpdate: "onpointerrawupdate" in window,
+      device: document.getElementById("device").value, driver: document.getElementById("driver").value,
+    };
+  }
+
+  function render() {
+    const rows = strokes.slice(-8).map(strokeSummary);
+    const warnings = rows.filter((row) => row.gaps || row.pressureJumps || (row.endedBy === "pointerup" && row.captureLost && row.outsideSamples === 0));
+    summary.innerHTML = "";
+    summary.append(`${strokes.length} strokes · ${navigator.userAgent}\n`);
+    for (const row of rows) {
+      const line = document.createElement("span");
+      if (warnings.includes(row)) line.className = "warn";
+      line.textContent = `${row.scenario} [${row.pointerType}] ${row.samples} samples/${row.events} events ${row.samplesPerSecond ?? "-"}/s`
+        + ` pressure ${row.pressure.min.toFixed(2)}–${row.pressure.max.toFixed(2)} tilt:${row.tiltReported} twist:${row.twistReported}`
+        + ` coalesced≤${row.maxCoalesced} outside:${row.outsideSamples} gaps:${row.gaps} jumps:${row.pressureJumps} end:${row.endedBy}\n`;
+      summary.append(line);
+    }
+  }
+
+  document.getElementById("clear").addEventListener("click", () => { strokes.length = 0; redraw(); render(); });
+  document.getElementById("download").addEventListener("click", () => {
+    const report = { generatedAt: new Date().toISOString(), environment: environment(), strokes: strokes.map((stroke) => ({ summary: strokeSummary(stroke), gaps: stroke.gaps, pressureJumps: stroke.pressureJumps, events: stroke.events })) };
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+    link.download = `pen-report-${Date.now()}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  });
+  addEventListener("resize", resize);
+  resize();
+</script>
