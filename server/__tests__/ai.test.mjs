@@ -222,3 +222,34 @@ test("an administrator can disable AI entirely", async (t) => {
   assert.equal((await (await app.fetch("/local-ai/settings")).json()).enabled, false);
   assert.equal((await app.fetch("/local-ai/settings/api-key", jsonInit("PUT", { apiKey: "ck_some_key_1" }))).status, 503);
 });
+
+test("the customer key never appears in logs or any browser-facing response of a full AI flow", async (t) => {
+  const fake = await startFakeSkillsmaster({ key: "ck_secret_never_logged_123" });
+  t.after(() => fake.close());
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, "customer-key"), `${fake.key}\n`);
+  const lines = [];
+  const app = await startApp({ dir, ai: { baseUrl: fake.baseUrl, customerKeyFile: path.join(dir, "customer-key") }, log: (line) => lines.push(line) });
+  t.after(() => app.close());
+  const bodies = [];
+  const call = async (pathname, init) => {
+    const response = await app.fetch(pathname, init);
+    bodies.push(JSON.stringify([...response.headers]), Buffer.from(await response.arrayBuffer()).toString("latin1"));
+    return response;
+  };
+  const projectId = await savedProject(app);
+  await call("/apps/image-studio/runtime-config.json");
+  await call("/local-ai/status");
+  await call("/local-ai/settings");
+  await call("/local-ai/mode-manifest?lang=en");
+  const submitted = await app.fetch(`/local-ai/projects/${projectId}/operations`, { method: "POST", body: operationForm(projectId) });
+  const { runId } = await submitted.json();
+  await call(`/local-ai/runs/${runId}`);
+  await call(`/local-ai/runs/${runId}`);
+  await call(`/local-ai/runs/${runId}/result`);
+  await call(`/image-studio/projects/${projectId}`);
+  fake.state.submitBehavior = { status: 500, body: { detail: `echo ${fake.key}` } };
+  await call(`/local-ai/projects/${projectId}/operations`, { method: "POST", body: operationForm(projectId, { id: "ai-operation-2" }) });
+  assert.ok(lines.length > 5);
+  for (const text of [...lines, ...bodies]) assert.ok(!text.includes(fake.key), text.slice(0, 200));
+});

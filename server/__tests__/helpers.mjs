@@ -30,7 +30,7 @@ export function rasterLayer(id, assetId) {
   return { id, type: "raster", name: id, width: 2, height: 3, source: { kind: "asset", assetId, mimeType: "image/png" } };
 }
 
-export async function startApp({ mode = "standalone", dir = tempDir(), ai = undefined, access = undefined, staticFiles = {}, env = {} } = {}) {
+export async function startApp({ mode = "standalone", dir = tempDir(), ai = undefined, access = undefined, staticFiles = {}, env = {}, recover = false, log = undefined } = {}) {
   const staticDir = path.join(dir, "dist");
   fs.mkdirSync(staticDir, { recursive: true });
   fs.writeFileSync(path.join(staticDir, "index.html"), "<!doctype html><title>Image Studio</title>");
@@ -46,9 +46,10 @@ export async function startApp({ mode = "standalone", dir = tempDir(), ai = unde
   let aiProxy = null;
   if (mode === "standalone") {
     store = openStore(config.storage);
+    if (recover) store.recovery = store.recover({ idempotentSubmit: config.ai.idempotentSubmit === true });
     aiProxy = createAiProxy({ ai: config.ai, store });
   }
-  const server = http.createServer(createHandler({ config, store, ai: aiProxy }));
+  const server = http.createServer(createHandler({ config, store, ai: aiProxy, log }));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   let closed = false;
@@ -67,7 +68,8 @@ export async function startApp({ mode = "standalone", dir = tempDir(), ai = unde
 
 /** Minimal fake of the skillsmaster customer AI API. */
 export async function startFakeSkillsmaster({ key = "test-customer-key" } = {}) {
-  const state = { submissions: [], requests: [], runs: new Map(), failStatus: false };
+  // submitBehavior: null (normal), "hang" (never answers), or { status, body } to answer with.
+  const state = { submissions: [], requests: [], runs: new Map(), failStatus: false, submitBehavior: null };
   const server = http.createServer(async (req, res) => {
     state.requests.push({ method: req.method, url: req.url, headers: req.headers });
     const send = (status, body, type = "application/json") => {
@@ -84,6 +86,8 @@ export async function startFakeSkillsmaster({ key = "test-customer-key" } = {}) 
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const form = await new Response(Buffer.concat(chunks), { headers: { "content-type": req.headers["content-type"] } }).formData();
+      if (state.submitBehavior === "hang") { state.submissions.push({ headers: req.headers, hung: true }); return; }
+      if (state.submitBehavior) { state.submissions.push({ headers: req.headers }); return send(state.submitBehavior.status, state.submitBehavior.body); }
       const idempotencyKey = req.headers["idempotency-key"];
       const existing = [...state.runs.entries()].find(([, run]) => run.key === idempotencyKey);
       if (existing) return send(200, { run_id: existing[0] });

@@ -18,6 +18,8 @@ export class AiUnavailableError extends StoreError {
   constructor(message, status = 503) { super(status, message); }
 }
 
+const NOT_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH"]);
+
 export const NO_KEY_REASON = "No skillsmaster API key is configured. Add one in Settings → API Key.";
 const API_KEY_PATTERN = /^[\x21-\x7e]{8,512}$/;
 
@@ -46,8 +48,11 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
     const timer = setTimeout(() => controller.abort(), ai.requestTimeoutMs ?? 60_000);
     try {
       return await fetchImpl(url, { ...init, signal: controller.signal, redirect: "manual" });
-    } catch {
-      throw new AiUnavailableError("The skillsmaster AI API could not be reached", 502);
+    } catch (error) {
+      const unavailable = new AiUnavailableError("The skillsmaster AI API could not be reached", 502);
+      // Connection setup failures prove the request never left this container.
+      unavailable.notSent = NOT_SENT_CODES.has(error?.cause?.code ?? error?.code);
+      throw unavailable;
     } finally {
       clearTimeout(timer);
     }
@@ -111,7 +116,7 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
       const response = await upstream(manifestUrl(language));
       const body = await safeJson(response);
       if (response.status === 401 || response.status === 403) throw new AiUnavailableError("skillsmaster.jp rejected the configured API key. Update it in Settings → API Key.", 502);
-      if (!response.ok) throw new AiUnavailableError(upstreamDetail(body, `AI mode manifest failed (${response.status})`), 502);
+      if (!response.ok) throw new AiUnavailableError(upstreamDetail(body, `AI mode manifest failed (${response.status})`, [keys?.current()]), 502);
       return body;
     },
 
@@ -123,6 +128,13 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
       catch { throw new StoreError(400, "operation must be a JSON field"); }
       const operation = store.prepareOperation(projectId, input);
       if (operation.runId) return { runId: operation.runId, operation };
+      if (operation.submission === "unknown" && !ai.idempotentSubmit) {
+        throw new StoreError(409, operation.error ?? "It is unknown whether this AI edit reached skillsmaster; start a new edit instead");
+      }
+      if (operation.submission === "rejected" || operation.status === "failed") {
+        throw new StoreError(409, "This AI edit already failed; start a new edit to try again");
+      }
+      if (operation.submission === "sent") throw new StoreError(409, "This AI edit is already being submitted");
 
       const file = form.get("file");
       if (!(file instanceof Blob) || !file.size) throw new StoreError(400, "file is required");
@@ -140,23 +152,35 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
         if (value !== "" && !RESERVED_FIELDS.has(key) && key !== maskField) body.append(key, value);
       }
 
+      // Recorded before the request leaves, so a crash from here on is detected at startup.
+      store.updateOperation(operation.id, { submission: "sent", status: "submitting", error: null });
       let response;
       try {
         response = await upstream(ai.runsPath.replace(/^\//, ""), { method: "POST", headers: { "Idempotency-Key": operation.id }, body });
       } catch (error) {
-        // Unknown whether the run was accepted: keep "submitting" so a retry with the
-        // same operation id reuses the same Idempotency-Key.
-        store.updateOperation(operation.id, { error: error.message });
+        if (error.notSent) {
+          store.updateOperation(operation.id, { submission: "pending", status: "submitting", error: error.message });
+          throw error;
+        }
+        // The request may have been accepted before the connection failed or timed out.
+        store.markSubmissionUnknown(operation.id, "The connection to skillsmaster failed while submitting this AI edit", { idempotentSubmit: ai.idempotentSubmit });
         throw error;
       }
       const result = await safeJson(response);
-      if (!response.ok || typeof result.run_id !== "string" || !result.run_id) {
-        const message = upstreamDetail(result, `AI run submission failed (${response.status})`);
-        store.updateOperation(operation.id, { status: "failed", error: message });
-        throw new StoreError(response.ok ? 502 : clientStatus(response.status), message);
+      if (response.ok && typeof result.run_id === "string" && result.run_id) {
+        const updated = store.updateOperation(operation.id, { runId: result.run_id, submission: "accepted", status: "running", error: null });
+        return { runId: result.run_id, operation: updated };
       }
-      const updated = store.updateOperation(operation.id, { runId: result.run_id, status: "running", error: null });
-      return { runId: result.run_id, operation: updated };
+      if (response.status >= 400 && response.status < 500) {
+        // A 4xx is a definite rejection: nothing was started upstream.
+        const message = upstreamDetail(result, `AI run submission failed (${response.status})`, [keys?.current()]);
+        store.updateOperation(operation.id, { submission: "rejected", status: "failed", error: message });
+        throw new StoreError(clientStatus(response.status), message);
+      }
+      // 5xx or a success without a run id: the upstream may still have started the run.
+      const reason = upstreamDetail(result, `skillsmaster answered ${response.status} without a run id while submitting this AI edit`, [keys?.current()]);
+      store.markSubmissionUnknown(operation.id, reason.replace(/\.$/, ""), { idempotentSubmit: ai.idempotentSubmit });
+      throw new StoreError(502, store.getOperation(operation.id).error);
     },
 
     async runStatus(runId) {
@@ -165,9 +189,9 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
       if (operation.status === "failed") return { status: "failed", resultReady: false, message: operation.error ?? undefined };
       const response = await upstream(`${ai.runsPath.replace(/^\//, "")}/${encodeURIComponent(runId)}`);
       const body = await safeJson(response);
-      if (!response.ok) throw new StoreError(clientStatus(response.status), upstreamDetail(body, `AI run status failed (${response.status})`));
+      if (!response.ok) throw new StoreError(clientStatus(response.status), upstreamDetail(body, `AI run status failed (${response.status})`, [keys?.current()]));
       const status = String(body.status ?? "unknown");
-      const message = typeof body.message === "string" ? body.message : undefined;
+      const message = typeof body.message === "string" && !body.message.includes(keys.current()) ? body.message.slice(0, 500) : undefined;
       if (status === "failed") store.updateOperation(operation.id, { status: "failed", error: message ?? "AI image edit failed" });
       return { status, resultReady: body.result_ready === true, ...(message ? { message } : {}) };
     },
@@ -179,7 +203,7 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
         const response = await upstream(`${ai.runsPath.replace(/^\//, "")}/${encodeURIComponent(runId)}/result`);
         const body = await safeJson(response);
         if (!response.ok || typeof body.url !== "string") {
-          throw new StoreError(clientStatus(response.status), upstreamDetail(body, `AI result delivery failed (${response.status})`));
+          throw new StoreError(clientStatus(response.status), upstreamDetail(body, `AI result delivery failed (${response.status})`, [keys?.current()]));
         }
         const target = new URL(typeof body.content_url === "string" ? body.content_url : body.url, `${ai.baseUrl}/`);
         // Only send the customer key back to the configured API origin, never to a storage URL.
@@ -238,8 +262,10 @@ async function safeJson(response) {
   try { return await response.json(); } catch { return {}; }
 }
 
-function upstreamDetail(body, fallback) {
-  return typeof body?.detail === "string" && body.detail.length <= 500 ? body.detail : fallback;
+function upstreamDetail(body, fallback, secrets = []) {
+  if (typeof body?.detail !== "string" || body.detail.length > 500) return fallback;
+  // An upstream message must never carry a customer key back to the browser or the logs.
+  return secrets.some((secret) => secret && body.detail.includes(secret)) ? fallback : body.detail;
 }
 
 /** Upstream auth failures concern the server's key, not the browser: report them as 502. */

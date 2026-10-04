@@ -18,7 +18,11 @@ export class StoreError extends Error {
   }
 }
 
-const SCHEMA = `
+// Ordered schema migrations; PRAGMA user_version records how many have been applied.
+// Append new entries only: never edit or reorder an entry that has shipped.
+const MIGRATIONS = [
+  // 1: baseline schema.
+  `
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -60,7 +64,17 @@ CREATE TABLE IF NOT EXISTS operations (
 );
 CREATE INDEX IF NOT EXISTS operations_project ON operations(project_id);
 CREATE UNIQUE INDEX IF NOT EXISTS operations_run ON operations(run_id) WHERE run_id IS NOT NULL;
-`;
+`,
+  // 2: whether an AI run submission reached skillsmaster. "sent" marks a request in flight,
+  // so a crash or timeout in that window is recorded as "unknown" instead of resubmitted.
+  `
+ALTER TABLE operations ADD COLUMN submission TEXT NOT NULL DEFAULT 'pending';
+UPDATE operations SET submission = 'accepted' WHERE run_id IS NOT NULL;
+`,
+];
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
+export const SUBMISSION_STATES = Object.freeze(["pending", "sent", "accepted", "rejected", "unknown"]);
 
 export function openStore({ databasePath, dataDir, now = () => new Date().toISOString() }) {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -68,9 +82,36 @@ export function openStore({ databasePath, dataDir, now = () => new Date().toISOS
   assertWritable(path.dirname(databasePath));
   assertWritable(dataDir);
   const db = new DatabaseSync(databasePath);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  db.exec(SCHEMA);
+  try {
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    const check = db.prepare("PRAGMA quick_check").all().map((row) => Object.values(row)[0]);
+    if (check.length !== 1 || check[0] !== "ok") {
+      throw new Error(`Database ${databasePath} failed its integrity check (${check.slice(0, 3).join("; ")}); restore it from a backup`);
+    }
+    migrate(db, databasePath);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return new Store(db, dataDir, now);
+}
+
+function migrate(db, databasePath) {
+  const current = db.prepare("PRAGMA user_version").get().user_version;
+  if (current > MIGRATIONS.length) {
+    throw new Error(`Database ${databasePath} has schema version ${current}, newer than this Image Studio (${MIGRATIONS.length}); upgrade the image or restore a matching backup`);
+  }
+  for (let version = current; version < MIGRATIONS.length; version += 1) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(MIGRATIONS[version]);
+      db.exec(`PRAGMA user_version = ${version + 1}`);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw new Error(`Database migration ${version + 1} failed: ${error.message}`);
+    }
+  }
 }
 
 class Store {
@@ -81,6 +122,50 @@ class Store {
   }
 
   close() { this.db.close(); }
+
+  /**
+   * Startup recovery after a crash or an interrupted write. Runs before the server
+   * accepts requests, so nothing else is writing to the storage directory:
+   *   - removes temporary files left by interrupted atomic writes;
+   *   - removes project directories and asset/result files the database no longer knows;
+   *   - marks AI submissions that were in flight as "unknown" (see aiProxy.mjs), or back
+   *     to "pending" when skillsmaster deduplicates resubmissions by Idempotency-Key.
+   * Returns counts for the startup log.
+   */
+  recover({ idempotentSubmit = false } = {}) {
+    const report = { tempFiles: 0, orphanProjects: 0, orphanAssets: 0, orphanResults: 0, interruptedSubmissions: 0 };
+    const projectsRoot = path.join(this.dataDir, "projects");
+    for (const file of walkFiles(this.dataDir)) {
+      if (file.endsWith(".tmp")) { removeFile(file); report.tempFiles += 1; }
+    }
+    const projectIds = new Set(this.db.prepare("SELECT id FROM projects").all().map((row) => row.id));
+    for (const entry of readDir(projectsRoot)) {
+      const dir = path.join(projectsRoot, entry.name);
+      if (!entry.isDirectory() || !projectIds.has(entry.name)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        report.orphanProjects += 1;
+        continue;
+      }
+      const assetIds = new Set(this.db.prepare("SELECT id FROM assets WHERE project_id = ?").all(entry.name).map((row) => row.id));
+      for (const file of readDir(path.join(dir, "assets"))) {
+        if (!assetIds.has(file.name)) { fs.rmSync(path.join(dir, "assets", file.name), { recursive: true, force: true }); report.orphanAssets += 1; }
+      }
+      const operationIds = new Set(this.db.prepare("SELECT id FROM operations WHERE project_id = ?").all(entry.name).map((row) => `${row.id}.bin`));
+      for (const file of readDir(path.join(dir, "ai-results"))) {
+        if (!operationIds.has(file.name)) { fs.rmSync(path.join(dir, "ai-results", file.name), { recursive: true, force: true }); report.orphanResults += 1; }
+      }
+    }
+    // Result bytes that vanished (e.g. a partial restore) must be downloaded again.
+    for (const row of this.db.prepare("SELECT * FROM operations WHERE result_mime_type IS NOT NULL").all()) {
+      if (!fs.existsSync(this.resultPath(operationJson(row)))) {
+        this.db.prepare("UPDATE operations SET result_mime_type = NULL, status = CASE WHEN status = 'result-ready' THEN 'running' ELSE status END WHERE id = ?").run(row.id);
+      }
+    }
+    const interrupted = this.db.prepare("SELECT id FROM operations WHERE submission = 'sent' AND run_id IS NULL").all();
+    for (const { id } of interrupted) this.markSubmissionUnknown(id, "Image Studio stopped while this AI edit was being submitted", { idempotentSubmit });
+    report.interruptedSubmissions = interrupted.length;
+    return report;
+  }
 
   // ---- projects -------------------------------------------------------------
 
@@ -214,12 +299,15 @@ class Store {
   }
 
   updateOperation(id, patch) {
-    const columns = { runId: "run_id", status: "status", error: "error", resultLayerId: "result_layer_id", resultMimeType: "result_mime_type" };
+    const columns = {
+      runId: "run_id", status: "status", error: "error", resultLayerId: "result_layer_id", resultMimeType: "result_mime_type", submission: "submission",
+    };
     const sets = [];
     const values = [];
     for (const [key, column] of Object.entries(columns)) {
       if (!(key in patch)) continue;
       if (key === "status" && !OPERATION_STATUSES.includes(patch.status)) throw new StoreError(400, "Unknown operation status");
+      if (key === "submission" && !SUBMISSION_STATES.includes(patch.submission)) throw new StoreError(400, "Unknown submission state");
       sets.push(`${column} = ?`);
       values.push(patch[key] ?? null);
     }
@@ -228,6 +316,20 @@ class Store {
     values.push(this.now(), id);
     this.db.prepare(`UPDATE operations SET ${sets.join(", ")} WHERE id = ?`).run(...values);
     return this.getOperation(id);
+  }
+
+  /**
+   * The submission may or may not have reached skillsmaster. Without upstream
+   * deduplication the operation fails and must never be resubmitted under the same id:
+   * the user decides whether to start a new edit. With deduplication it stays
+   * resumable, because resubmitting reuses the same Idempotency-Key.
+   */
+  markSubmissionUnknown(id, reason, { idempotentSubmit = false } = {}) {
+    if (idempotentSubmit) return this.updateOperation(id, { submission: "unknown", status: "submitting", error: reason });
+    return this.updateOperation(id, {
+      submission: "unknown", status: "failed",
+      error: `${reason}. It is unknown whether skillsmaster accepted it, so it was not resubmitted; check your skillsmaster usage before starting a new edit.`,
+    });
   }
 
   completeOperation(projectId, operationId, resultLayerId) {
@@ -290,7 +392,7 @@ function operationJson(row) {
     inputLayerId: row.input_layer_id, maskLayerId: row.mask_layer_id, parameters: JSON.parse(row.parameters_json),
     runId: row.run_id, status: row.status, resultLayerId: row.result_layer_id, error: row.error,
     retryOf: row.retry_of, recipeId: row.recipe_id, stepIndex: row.step_index,
-    resultMimeType: row.result_mime_type, createdAt: row.created_at, updatedAt: row.updated_at,
+    resultMimeType: row.result_mime_type, submission: row.submission, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
 
@@ -364,6 +466,18 @@ function writeFileAtomic(file, bytes) {
 
 function removeFile(file) {
   fs.rmSync(file, { force: true });
+}
+
+function readDir(directory) {
+  try { return fs.readdirSync(directory, { withFileTypes: true }); } catch { return []; }
+}
+
+function* walkFiles(directory) {
+  for (const entry of readDir(directory)) {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) yield* walkFiles(full);
+    else if (entry.isFile()) yield full;
+  }
 }
 
 function assertWritable(directory) {

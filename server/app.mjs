@@ -3,8 +3,8 @@
 // server-side AI proxy.
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { StoreError } from "./store.mjs";
+import { createAccessControl, loginPage, sameOrigin } from "./access.mjs";
 import { ALLOWED_IMAGE_TYPES, imageWithinLimits, sniffImage } from "./images.mjs";
 
 export const APP_BASE_PATH = "/apps/image-studio";
@@ -20,6 +20,7 @@ export function createHandler({ config, store = null, ai = null, log = () => {} 
   const standalone = config.mode === "standalone";
   if (standalone && (!store || !ai)) throw new Error("Standalone mode requires a store and an AI adapter");
   const staticDir = config.server.staticDir;
+  const access = standalone ? createAccessControl(config.access) : null;
 
   return async function handle(req, res) {
     const started = Date.now();
@@ -31,9 +32,14 @@ export function createHandler({ config, store = null, ai = null, log = () => {} 
 
       if (pathname === "/healthz") return sendJson(res, 200, { status: "ok", mode: config.mode });
 
-      if (standalone && config.access.basicAuth && !authorized(req, config.access.basicAuth)) {
-        res.setHeader("WWW-Authenticate", 'Basic realm="Image Studio", charset="UTF-8"');
-        return sendJson(res, 401, { detail: "Authentication required" });
+      let via = null;
+      if (standalone) {
+        if (!access.hostAllowed(req)) {
+          return sendJson(res, 403, { detail: "This Image Studio only accepts localhost requests. Configure access.tokenFile to allow remote access." });
+        }
+        if (pathname === `${APP_BASE_PATH}/session`) return await routeSession(req, res);
+        via = access.authenticate(req);
+        if (!via) return unauthenticated(req, res, pathname);
       }
 
       const appPath = stripBase(pathname);
@@ -47,7 +53,9 @@ export function createHandler({ config, store = null, ai = null, log = () => {} 
       if (pathname.startsWith("/image-studio/") || pathname === "/image-studio" || pathname.startsWith("/local-ai/")) {
         // Platform mode never serves a local business API; the platform owns these routes.
         if (!standalone) return sendJson(res, 404, { detail: "Not found" });
-        if (!["GET", "HEAD"].includes(req.method) && crossOrigin(req)) return sendJson(res, 403, { detail: "Cross-origin request rejected" });
+        if (!["GET", "HEAD"].includes(req.method) && (via === "session" ? !sameOrigin(req) : crossOrigin(req))) {
+          return sendJson(res, 403, { detail: "Cross-origin request rejected" });
+        }
         return await routeApi(req, res, url);
       }
 
@@ -63,6 +71,36 @@ export function createHandler({ config, store = null, ai = null, log = () => {} 
       res.destroy();
     }
   };
+
+  async function routeSession(req, res) {
+    if (req.method === "GET") return sendJson(res, 200, { authenticated: Boolean(access.authenticate(req)), tokenLogin: access.tokenLogin });
+    if (req.method === "DELETE") {
+      if (!sameOrigin(req)) return sendJson(res, 403, { detail: "Cross-origin request rejected" });
+      res.setHeader("Set-Cookie", access.logoutCookie());
+      return sendEmpty(res, 204);
+    }
+    if (req.method !== "POST") return sendJson(res, 405, { detail: "Method not allowed" });
+    const body = await readJson(req, 4 * 1024);
+    try {
+      res.setHeader("Set-Cookie", access.login(req, body.token));
+    } catch (error) {
+      return sendJson(res, error.status ?? 400, { detail: error.message });
+    }
+    return sendEmpty(res, 204);
+  }
+
+  function unauthenticated(req, res, pathname) {
+    if (access.basicAuth) res.setHeader("WWW-Authenticate", 'Basic realm="Image Studio", charset="UTF-8"');
+    const appPath = stripBase(pathname);
+    const navigation = ["GET", "HEAD"].includes(req.method) && !path.extname(appPath)
+      && !pathname.startsWith("/image-studio") && !pathname.startsWith("/local-ai/");
+    if (access.tokenLogin && navigation) {
+      const page = Buffer.from(loginPage(APP_BASE_PATH));
+      res.writeHead(401, { "Content-Type": "text/html; charset=utf-8", "Content-Length": page.length, "Cache-Control": "no-store" });
+      return res.end(req.method === "HEAD" ? undefined : page);
+    }
+    return sendJson(res, 401, { detail: "Authentication required" });
+  }
 
   async function routeApi(req, res, url) {
     const parts = url.pathname.split("/").filter(Boolean).map(decodeSegment);
@@ -189,24 +227,6 @@ function crossOrigin(req) {
   const origin = req.headers.origin;
   if (!origin) return false;
   try { return new URL(origin).host !== req.headers.host; } catch { return true; }
-}
-
-function authorized(req, { username, password }) {
-  const header = String(req.headers.authorization ?? "");
-  if (!header.startsWith("Basic ")) return false;
-  const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator < 0) return false;
-  // Evaluate both comparisons so timing does not reveal which part was wrong.
-  const userOk = safeEqual(decoded.slice(0, separator), username);
-  const passwordOk = safeEqual(decoded.slice(separator + 1), password);
-  return userOk && passwordOk;
-}
-
-function safeEqual(a, b) {
-  const left = crypto.createHash("sha256").update(a).digest();
-  const right = crypto.createHash("sha256").update(b).digest();
-  return crypto.timingSafeEqual(left, right);
 }
 
 function stripBase(pathname) {
