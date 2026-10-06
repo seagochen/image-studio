@@ -9,6 +9,7 @@ import {
   type ImageStudioDocument, type ImageStudioLayer, type RasterLayer, type Stroke,
 } from "../domain/document";
 import { sampledPixelColor } from "../domain/eyedropper";
+import { renderDrawingLayer, renderAnnotationLayer } from "../domain/layerRasterization";
 import { encodeSelectionRuns } from "../domain/selectionMaskRuns";
 import {
   BrushStrokeSession, MAX_STROKE_SAMPLES, fallbackSample, pointerSamples, renderBrushDabs,
@@ -21,7 +22,7 @@ import {
   combineSelectionMask, contiguousColorSelectionMask, interpolatedPoints, invertSelectionMask,
   ellipticalSelectionMask, polygonSelectionMask, rectangularSelectionMask, type PixelSelectionMask, type SelectionOperation,
 } from "../domain/pixelTools";
-import { constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
+import { copySelectedRasterTiles, constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { applyPixelTileDiffs, PixelTileRecorder, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, TOOL_LABELS, type PixelSelection, type MarqueeDraft, type ShapeTool, type Tool } from "./tools";
 
@@ -81,6 +82,7 @@ export interface UseRasterToolSessionResult {
   movePointer: (event?: PointerKonvaEvent) => void;
   endPointer: (event?: PointerKonvaEvent) => void;
   clearPixelSelection: () => void;
+  copyPixelSelection: () => RasterLayer | null;
   liftPixelSelection: () => void;
   invertPixelSelection: () => void;
 }
@@ -185,8 +187,8 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     if (!canvas) return;
     let diffs: PixelTileDiff[] | null = null;
     try {
-      const coverage = resolveRasterEditCoverage(document, selected, pixelSelection);
-      diffs = eraseSelectedRasterTiles(canvas, pixelSelection, coverage, canRecordPixelBytes, canRecordPixel);
+      resolveRasterEditCoverage(document, selected, pixelSelection);
+      diffs = eraseSelectedRasterTiles(canvas, pixelSelection, null, canRecordPixelBytes, canRecordPixel);
       if (!diffs.length) { setPixelSelection(null); return; }
       const source = { kind: "data-url" as const, value: canvas.toDataURL("image/png"), mimeType: "image/png" };
       commitPixel((current) => replaceRasterPixels(current, selected.id, source), "Clear selected pixels", selected.id, diffs);
@@ -194,6 +196,39 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
     setPixelSelection(null);
     refreshPixelPreview((value) => value + 1);
   }, [canRecordPixel, canRecordPixelBytes, commitPixel, document, pixelSelection, refreshPixelPreview, selected, selectedEditable, selectedRasterTooLarge, setError]);
+
+  const copyPixelSelection = useCallback((): RasterLayer | null => {
+    if (!selected || !["raster", "paint", "annotation"].includes(selected.type) || !pixelSelection || pixelSelection.layerId !== selected.id
+      || !selectedEditable || selected.width * selected.height > 4096 * 4096 || activePointerIdRef.current !== null) {
+      setError("editFailed"); return null;
+    }
+    let image: HTMLCanvasElement | null = null;
+    let rendered: HTMLCanvasElement | null = null;
+    try {
+      const makeCanvas = (width: number, height: number) => {
+        const canvas = window.document.createElement("canvas"); canvas.width = width; canvas.height = height; return canvas;
+      };
+      const canvas = selected.type === "raster"
+        ? (directPixelLayerIdRef.current === selected.id ? directPixelCanvasRef.current : null)
+        : selected.type === "paint" ? (rendered = renderDrawingLayer(selected, makeCanvas))
+          : selected.type === "annotation" ? (rendered = renderAnnotationLayer(selected, makeCanvas)) : null;
+      if (!canvas) throw new Error("Selection pixels are not ready");
+      const raster = { ...selected, type: "raster" as const, source: { kind: "data-url" as const, value: "", mimeType: "image/png" } };
+      const coverage = resolveRasterEditCoverage(document, raster, pixelSelection);
+      const copied = copySelectedRasterTiles(canvas, pixelSelection, coverage, canRecordPixelBytes);
+      image = copied.image;
+      const position = imageToStage({ x: copied.x, y: copied.y }, selected.transform);
+      return { ...raster, id: createId("raster"), name: selected.name + " selection", locked: false,
+        rasterMaskId: undefined, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined,
+        width: image.width, height: image.height, transform: { ...selected.transform, x: position.x, y: position.y },
+        source: { kind: "data-url", value: image.toDataURL("image/png"), mimeType: "image/png" },
+      };
+    } catch { setError("editFailed"); return null; }
+    finally {
+      if (image) { image.width = 1; image.height = 1; }
+      if (rendered) { rendered.width = 1; rendered.height = 1; }
+    }
+  }, [document, pixelSelection, selected, selectedEditable, selectedRasterTooLarge, canRecordPixelBytes, canRecordPixel, setError]);
 
   const liftPixelSelection = useCallback(() => {
     if (!selected || selected.type !== "raster" || !selectedEditable || selectedRasterTooLarge
@@ -631,7 +666,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
   return {
     cursorPreview, setCursorPreview, pixelSelection, setPixelSelection, marqueeDraft, lassoDraft, draftAnnotation, pixelPreviewVersion,
     directPixelCanvasRef, directPixelLayerIdRef, activePointerIdRef,
-    beginPointer, movePointer, endPointer, clearPixelSelection, liftPixelSelection, invertPixelSelection, restorePixelHistory,
+    beginPointer, movePointer, endPointer, clearPixelSelection, copyPixelSelection, liftPixelSelection, invertPixelSelection, restorePixelHistory,
   };
 }
 

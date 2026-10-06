@@ -187,14 +187,12 @@ export function bakeSelectedAdjustmentTiles(
   }
 }
 
-/** Separates selected visible pixels into a cropped image and erases their raw source pixels.
- * The source's owned mask is baked into the lifted pixels exactly once; source
- * erasure itself is binary so the original mask cannot reveal a second copy. */
-export function liftSelectedRasterTiles(
+/** Copies selected visible pixels into a cropped image without changing the source. */
+export function copySelectedRasterTiles(
   canvas: HTMLCanvasElement, selection: PixelSelectionMask, coverage: Uint8Array | null,
-  canRecordBytes: (bytes: number) => boolean, canRecordDiffs: (diffs: readonly PixelTileDiff[]) => boolean,
+  canRecordBytes: (bytes: number) => boolean,
   createCanvas: (width: number, height: number) => HTMLCanvasElement = defaultCanvas,
-): { image: HTMLCanvasElement; x: number; y: number; diffs: PixelTileDiff[] } {
+): { image: HTMLCanvasElement; x: number; y: number } {
   if (canvas.width !== selection.width || canvas.height !== selection.height
     || selection.pixels.length !== canvas.width * canvas.height
     || (coverage && coverage.length !== selection.pixels.length)) throw new Error("Selection dimensions do not match raster canvas");
@@ -227,10 +225,25 @@ export function liftSelectedRasterTiles(
       }
       imageContext.putImageData(pixels, 0, row);
     }
-    const diffs = eraseSelectedRasterTiles(canvas, selection, null, canRecordBytes, canRecordDiffs);
-    return { image, x: left, y: top, diffs };
+    return { image, x: left, y: top };
   } catch (error) {
     image.width = 1; image.height = 1;
+    throw error;
+  }
+}
+
+/** Copies before erasing so a failed extraction never changes the source. */
+export function liftSelectedRasterTiles(
+  canvas: HTMLCanvasElement, selection: PixelSelectionMask, coverage: Uint8Array | null,
+  canRecordBytes: (bytes: number) => boolean, canRecordDiffs: (diffs: readonly PixelTileDiff[]) => boolean,
+  createCanvas: (width: number, height: number) => HTMLCanvasElement = defaultCanvas,
+): { image: HTMLCanvasElement; x: number; y: number; diffs: PixelTileDiff[] } {
+  const copied = copySelectedRasterTiles(canvas, selection, coverage, canRecordBytes, createCanvas);
+  try {
+    const diffs = eraseSelectedRasterTiles(canvas, selection, null, canRecordBytes, canRecordDiffs);
+    return { ...copied, diffs };
+  } catch (error) {
+    copied.image.width = 1; copied.image.height = 1;
     throw error;
   }
 }

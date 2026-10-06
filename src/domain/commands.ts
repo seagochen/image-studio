@@ -99,6 +99,31 @@ export function addSelectionMaskedLocalLayer(
   return updateStructure(document, [...document.layers, layer, mask], { layerId: layer.id });
 }
 
+/** Hides selected vector pixels with an owned binary clip, preserving editable content. */
+export function clearSelectedVectorPixels(document: ImageStudioDocument, sourceId: string, selection: PixelSelectionMask): ImageStudioDocument {
+  const source = document.layers.find((layer) => layer.id === sourceId);
+  if (!source || (source.type !== "paint" && source.type !== "annotation") || !layerIsEditable(document.layers, sourceId)) return document;
+  if (source.width !== selection.width || source.height !== selection.height) throw new Error("Selection dimensions do not match layer");
+  const existing = source.rasterMaskId ? document.layers.find((layer) => layer.id === source.rasterMaskId) : null;
+  if (source.rasterMaskId && (!existing || existing.type !== "mask")) throw new Error("Invalid owned mask");
+  const mask = existing?.type === "mask" ? existing : {
+    ...createDrawingLayer(document, "mask", `${source.name} selection mask`),
+    parentId: source.parentId, width: source.width, height: source.height,
+    transform: { ...source.transform }, selectionRuns: [0, source.width * source.height],
+  };
+  const inherited = mask.clipRuns ? decodeSelectionRuns(mask.clipRuns, source.width, source.height) : null;
+  const removed = new Uint8Array(selection.pixels.length);
+  for (let index = 0; index < removed.length; index += 1) {
+    const excluded = inherited && Boolean(inherited[index]) === (mask.clipInverted === true);
+    removed[index] = selection.pixels[index] || excluded ? 1 : 0;
+  }
+  const clipped = { ...mask, clipRuns: encodeSelectionRuns({ ...selection, pixels: removed }), clipInverted: true };
+  const layers = existing
+    ? document.layers.map((layer) => layer.id === mask.id ? clipped : layer)
+    : [...document.layers.map((layer) => layer.id === source.id ? { ...source, rasterMaskId: mask.id } : layer), clipped];
+  return updateStructure(document, layers);
+}
+
 /** Splits existing vector content into complementary editable regions without rasterizing it. */
 export function liftSelectedVectorLayer(
   document: ImageStudioDocument, sourceId: string, selection: PixelSelectionMask,

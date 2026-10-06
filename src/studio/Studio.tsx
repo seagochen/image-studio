@@ -19,7 +19,7 @@ import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { applyConventionalEditorOutcome, type ConventionalEditorInput } from "../adapters/conventionalEditor";
 import { AiEditDialog } from "../ai/AiEditDialog";
 import {
-  addLayer, addSelectionMaskedAdjustmentLayer, addStroke, attachPaintAsRasterMask, createAnnotationLayer, createAttachedRasterMask, createDrawingLayer, deleteLayer, duplicateLayer,
+  addLayer, addSelectionMaskedAdjustmentLayer, addStroke, attachPaintAsRasterMask, createAnnotationLayer, createAttachedRasterMask, createDrawingLayer, deleteLayer, duplicateLayer, clearSelectedVectorPixels,
   insertLayerAfter, liftSelectedVectorLayer, moveLayer, patchLayer, replaceAdjacentLayers, replaceLastStroke, replaceRasterLayer, replaceRasterPixels,
   selectLayer, setLayerTransform, replaceAnnotationElement,
 } from "../domain/commands";
@@ -180,7 +180,7 @@ export function Studio(): JSX.Element {
   const {
     cursorPreview, setCursorPreview, pixelSelection, setPixelSelection, marqueeDraft, lassoDraft, draftAnnotation, pixelPreviewVersion,
     directPixelCanvasRef, directPixelLayerIdRef, activePointerIdRef,
-    beginPointer, movePointer, endPointer, clearPixelSelection, liftPixelSelection, invertPixelSelection, restorePixelHistory,
+    beginPointer, movePointer, endPointer, clearPixelSelection, copyPixelSelection, liftPixelSelection, invertPixelSelection, restorePixelHistory,
   } = useRasterToolSession({
     tool, document, selected, selectedEditable, selectedRasterTooLarge, viewport, setViewport, stageRef, commit, commitPixel, canRecordPixel, canRecordPixelLift, canRecordPixelBytes,
     brushSettings, brushSize, paintColor, changePaintColor, maskValue, magicTolerance, selectionOperation, smudgeStrength, pixelOpacity,
@@ -234,19 +234,35 @@ export function Studio(): JSX.Element {
   const redoDocument = useCallback(() => runHistory("redo"), [runHistory]);
 
   const removeSelectedLayer = useCallback(() => {
+    if (pixelSelection && pixelSelection.layerId === selected?.id) {
+      if (selected.type === "raster") clearPixelSelection();
+      else if (selected.type === "paint" || selected.type === "annotation") {
+        try {
+          commit((current) => clearSelectedVectorPixels(current, selected.id, pixelSelection), "Clear selected pixels");
+          setPixelSelection(null);
+        } catch { setError("editFailed"); }
+      }
+      return;
+    }
     if (selected && selectedEditable) commit((current) => deleteLayer(current, selected.id), "Delete layer");
-  }, [commit, selected, selectedEditable]);
+  }, [commit, selected, selectedEditable, pixelSelection, clearPixelSelection]);
 
   const duplicateSelectedLayer = useCallback(() => {
     if (selected) commit((current) => duplicateLayer(current, selected.id), "Duplicate layer");
   }, [commit, selected]);
 
   const copySelectedLayer = useCallback(() => {
+    if (pixelSelection && pixelSelection.layerId === selected?.id) {
+      const layer = copyPixelSelection();
+      if (!layer) return false;
+      setClipboard({ ...documentRef.current, layers: [layer], selection: { layerId: layer.id } });
+      return true;
+    }
     const copied = copyLayer(documentRef.current);
     if (!copied) return false;
     setClipboard(copied);
     return true;
-  }, []);
+  }, [pixelSelection, selected?.id, copyPixelSelection]);
   const cutSelectedLayer = useCallback(() => {
     if (!selected || !selectedEditable) return;
     if (copySelectedLayer()) removeSelectedLayer();

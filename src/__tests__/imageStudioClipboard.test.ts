@@ -1,6 +1,7 @@
 import { copyLayer, pasteLayer } from "../domain/layerClipboard";
 import { createEmptyDocument } from "../domain/document";
-import { addLayer, createDrawingLayer, deleteLayer } from "../domain/commands";
+import { clearSelectedVectorPixels, addLayer, createDrawingLayer, deleteLayer } from "../domain/commands";
+import { decodeSelectionRuns } from "../domain/selectionMaskRuns";
 import { DocumentHistory } from "../domain/history";
 import { bindConfiguredShortcuts, DEFAULT_SHORTCUTS } from "../domain/shortcutSettings";
 
@@ -71,4 +72,25 @@ it("handles editing only on the focused canvas and preserves text inputs and IME
   for (const key of ["c", "x", "v", "Delete"]) expect(press(input, key, { ctrlKey: key !== "Delete" }).defaultPrevented).toBe(false);
   dispose();
   surface.remove();
+});
+
+it("clears vector selection through a clip and keeps content editable with undo", () => {
+  const empty = { ...createEmptyDocument(), canvas: { width: 3, height: 1 } };
+  const layer = createDrawingLayer(empty, "paint", "Paint");
+  const source = addLayer(empty, layer);
+  const cleared = clearSelectedVectorPixels(source, layer.id, { width: 3, height: 1, pixels: new Uint8Array([0,1,0]) });
+  const content = cleared.layers.find((item) => item.id === layer.id)!;
+  const mask = cleared.layers.find((item) => item.id === content.rasterMaskId)!;
+  expect(content.type).toBe("paint");
+  expect(mask.type).toBe("mask");
+  if (mask.type !== "mask") throw new Error("Expected mask");
+  expect([...decodeSelectionRuns(mask.clipRuns!,3,1)]).toEqual([0,1,0]);
+  expect(mask.clipInverted).toBe(true);
+  const again = clearSelectedVectorPixels(cleared, layer.id, { width: 3, height: 1, pixels: new Uint8Array([1,0,1]) });
+  const full = again.layers.find((item) => item.id === mask.id)!;
+  if (full.type !== "mask") throw new Error("Expected mask");
+  expect([...decodeSelectionRuns(full.clipRuns!,3,1)]).toEqual([1,1,1]);
+  const history = new DocumentHistory(); history.execute(source, cleared, "Clear selection");
+  expect(history.undo(cleared)).toEqual(source);
+  expect(history.redo(source)).toEqual(cleared);
 });

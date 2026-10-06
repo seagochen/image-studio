@@ -1,6 +1,6 @@
 import { createDrawingLayer } from "../domain/commands";
 import { createEmptyDocument } from "../domain/document";
-import { bakeSelectedAdjustmentTiles, constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
+import { copySelectedRasterTiles, bakeSelectedAdjustmentTiles, constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { rasterLayerFromImage } from "../domain/importImage";
 
 describe("Image Studio effective edit coverage", () => {
@@ -67,6 +67,20 @@ describe("Image Studio effective edit coverage", () => {
     expect(diffs).toHaveLength(1);
     source.canvas.getContext("2d")!.putImageData(new TestImageData(diffs[0].before, 3, 1) as ImageData, 0, 0);
     expect([...source.pixels]).toEqual([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+  });
+
+  it("copies a cropped non-rectangular selection without changing source pixels", () => {
+    const source = pixelCanvas(4, 3);
+    for (let index = 0; index < 12; index += 1) source.pixels.set([index, 20, 30, 255], index * 4);
+    const before = new Uint8ClampedArray(source.pixels);
+    const selection = { width: 4, height: 3, pixels: new Uint8Array([0,0,0,0, 0,1,1,0, 0,1,0,0]) };
+    const coverage = new Uint8Array(12).fill(255); coverage[5] = 128;
+    const copied = copySelectedRasterTiles(source.canvas, selection, coverage, () => true,
+      (width, height) => pixelCanvas(width, height).canvas);
+    expect([copied.x, copied.y, copied.image.width, copied.image.height]).toEqual([1,1,2,2]);
+    const pixels = copied.image.getContext("2d")!.getImageData(0,0,2,2).data;
+    expect([...pixels]).toEqual([5,20,30,128, 6,20,30,255, 9,20,30,255, 0,0,0,0]);
+    expect(source.pixels).toEqual(before);
   });
 
   it("lifts only selected visible pixels and erases the source with tile undo", () => {

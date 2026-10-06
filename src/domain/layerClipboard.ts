@@ -26,5 +26,10 @@ export function pasteLayer(document: ImageStudioDocument, clipboard: ImageStudio
     const original = clipboard.layers.find((candidate) => candidate.id === clipboard.selection.layerId)!;
     return { ...layer, name: original.name, transform: { ...original.transform } };
   });
-  return touchDocument({ ...document, layers: [...document.layers, ...layers], selection: duplicate.selection });
+  const pastedIds = new Set(layers.map((layer) => layer.id));
+  const detached = layers.map((layer) => ({ ...layer,
+    parentId: layer.parentId && (pastedIds.has(layer.parentId)
+      || document.layers.some((parent) => parent.id === layer.parentId && parent.type === "group")) ? layer.parentId : null,
+  }));
+  return touchDocument({ ...document, layers: [...document.layers, ...detached], selection: duplicate.selection });
 }
