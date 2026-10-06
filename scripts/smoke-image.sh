@@ -32,6 +32,7 @@ echo "== platform mode (read-only root, 101:101)"
 docker run -d --name "$PREFIX-platform" --read-only --cap-drop ALL --security-opt no-new-privileges \
   -e SKILLSMASTER_MODE=platform -p "127.0.0.1:$PLATFORM_PORT:8080" "$IMAGE" >/dev/null
 wait_healthy "$PLATFORM_PORT"
+[ "$(docker inspect "$PREFIX-platform" --format '{{len .Mounts}}')" = 0 ] || fail "platform must not have data volumes"
 [ "$(docker exec "$PREFIX-platform" id -u):$(docker exec "$PREFIX-platform" id -g)" = "101:101" ] || fail "platform must run as 101:101"
 curl -fsS "http://127.0.0.1:$PLATFORM_PORT/apps/image-studio/runtime-config.json" | grep -q '"mode":"platform"' || fail "platform runtime config"
 curl -fsS "http://127.0.0.1:$PLATFORM_PORT/apps/image-studio/projects/deep-link" | grep -qi '<!doctype html' || fail "platform deep link"

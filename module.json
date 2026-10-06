@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "static-webapp",
   "moduleId": "image-studio",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "suggestedSlug": "image-studio",
   "containerPort": 8080,
   "healthPath": "/healthz",

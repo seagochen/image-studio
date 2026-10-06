@@ -32,7 +32,6 @@ RUN addgroup -S -g 101 imagestudio \
  && mkdir -p /data/db /data/storage \
  && chown -R 101:101 /data
 
-VOLUME ["/data"]
 USER 101:101
 EXPOSE 8080 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
