@@ -1,3 +1,4 @@
+import { copyLayer, pasteLayer } from "../domain/layerClipboard";
 import { AnnotationProperties } from "./AnnotationProperties";
 import { PROPERTY_LABELS } from "./propertyLabels";
 import { useCompositePreview } from "./useCompositePreview";
@@ -86,6 +87,7 @@ export function Studio(): JSX.Element {
   const [cacheStatus, setCacheStatus] = useState(fileCopy[locale].localCacheChecking);
   const refreshCacheStatus = useCallback(() => { void previewStorageStatus().then((value) => setCacheStatus(formatCacheStatus(fileCopy[locale], value))).catch(() => setCacheStatus(fileCopy[locale].localCacheUnavailable)); }, [locale]);
   useEffect(() => { refreshCacheStatus(); }, [refreshCacheStatus]);
+  const [clipboard, setClipboard] = useState<ImageStudioDocument | null>(null);
   const [document, setDocument] = useState<ImageStudioDocument>(createEmptyDocument);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const { viewport, setViewport, surfaceSize, fitView, zoomAt, actualSize } = useCanvasViewport(surfaceRef, document.canvas);
@@ -232,12 +234,26 @@ export function Studio(): JSX.Element {
   const redoDocument = useCallback(() => runHistory("redo"), [runHistory]);
 
   const removeSelectedLayer = useCallback(() => {
-    if (selected && !selected.locked) commit((current) => deleteLayer(current, selected.id), "Delete layer");
-  }, [commit, selected]);
+    if (selected && selectedEditable) commit((current) => deleteLayer(current, selected.id), "Delete layer");
+  }, [commit, selected, selectedEditable]);
 
   const duplicateSelectedLayer = useCallback(() => {
     if (selected) commit((current) => duplicateLayer(current, selected.id), "Duplicate layer");
   }, [commit, selected]);
+
+  const copySelectedLayer = useCallback(() => {
+    const copied = copyLayer(documentRef.current);
+    if (!copied) return false;
+    setClipboard(copied);
+    return true;
+  }, []);
+  const cutSelectedLayer = useCallback(() => {
+    if (!selected || !selectedEditable) return;
+    if (copySelectedLayer()) removeSelectedLayer();
+  }, [selected, selectedEditable, copySelectedLayer, removeSelectedLayer]);
+  const pasteCopiedLayer = useCallback(() => {
+    if (clipboard) commit((current) => pasteLayer(current, clipboard), "Paste layer");
+  }, [clipboard, commit]);
 
   // Opens the adjustment layer in a popup (like RasterEditorDialog) before it ever touches the
   // real document — nothing is committed until the dialog resolves to keep or bake.
@@ -353,6 +369,10 @@ export function Studio(): JSX.Element {
     return bindConfiguredShortcuts(surface, shortcutBindings, (action) => {
       if (action === "undo") undoDocument();
       else if (action === "redo") redoDocument();
+      else if (action === "copy") copySelectedLayer();
+      else if (action === "cut") cutSelectedLayer();
+      else if (action === "paste") pasteCopiedLayer();
+      else if (action === "delete") removeSelectedLayer();
       else if (action === "fit") fitView();
       else if (action === "eyedropper") void pickScreenColor();
       else {
@@ -363,7 +383,7 @@ export function Studio(): JSX.Element {
         setTool(action); setInspectorTab("properties");
       }
     });
-  }, [aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
+  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
 
   useEffect(() => {
     const closeMenusOutside = (event: MouseEvent) => {
@@ -430,13 +450,14 @@ export function Studio(): JSX.Element {
         <span className="header-divider" aria-hidden="true" />
         <FileMenu title={document.title} copy={fileCopy[locale]} projects={projects} busy={fileBusy || persistence === "saving"}
           canExport={Boolean(document.layers.length)} canSave={Boolean(document.layers.length)}
-          canUndo={history.canUndo} canRedo={history.canRedo} canDuplicate={Boolean(selected)} canDelete={Boolean(selected && !selected.locked)}
+          canUndo={history.canUndo} canRedo={history.canRedo} canDuplicate={Boolean(selected)} canDelete={Boolean(selected && selectedEditable)} canPaste={Boolean(clipboard)}
           canZoomIn={viewport.scale < MAX_ZOOM} canZoomOut={viewport.scale > MIN_ZOOM} navigatorVisible={!navigatorCollapsed}
           shortcuts={{ undo: shortcutBindings.undo, redo: shortcutBindings.redo, fit: shortcutBindings.fit }}
           onRename={renameProject} onNew={() => void openProject("")} onOpen={(id) => void openProject(id)} onImport={(file) => void importStudioFile(file)}
           onSave={() => void manuallySaveProject()} onExport={(format) => {setDeliveryFormat(format);setDeliveryOpen(true);}} onSettings={() => setSettingsOpen(true)} onApiKey={standalone ? () => setApiKeyOpen(true) : undefined}
           onClearLocalCache={() => { void clearPreviewTileCache().finally(refreshCacheStatus);}} cacheStatus={cacheStatus}
           onUndo={undoDocument} onRedo={redoDocument} onDuplicate={duplicateSelectedLayer} onDelete={removeSelectedLayer}
+          onCopy={copySelectedLayer} onCut={cutSelectedLayer} onPaste={pasteCopiedLayer}
           onZoomIn={() => zoomAt(1.2)} onZoomOut={() => zoomAt(1 / 1.2)} onActualSize={actualSize} onFit={() => fitView()}
           onToggleNavigator={() => setNavigatorCollapsed((value) => !value)} />
         <div className="header-actions">

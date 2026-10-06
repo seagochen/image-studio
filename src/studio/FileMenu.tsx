@@ -18,6 +18,7 @@ interface Props {
   canRedo: boolean;
   canDuplicate: boolean;
   canDelete: boolean;
+  canPaste: boolean;
   canZoomIn: boolean;
   canZoomOut: boolean;
   navigatorVisible: boolean;
@@ -37,6 +38,9 @@ interface Props {
   onRedo: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onActualSize: () => void;
@@ -162,7 +166,10 @@ export function FileMenu(props: Props): JSX.Element {
             {row("redo", t.redo, props.onRedo, { disabled: !props.canRedo, shortcut: props.shortcuts.redo })}
             <hr />
             {row("duplicate", t.duplicateLayer, props.onDuplicate, { disabled: !props.canDuplicate })}
-            {row("trash", t.deleteLayer, props.onDelete, { disabled: !props.canDelete })}
+            {row(null, t.copy, props.onCopy, { disabled: !props.canDuplicate, shortcut: "Mod+c" })}
+            {row(null, t.cut, props.onCut, { disabled: !props.canDelete, shortcut: "Mod+x" })}
+            {row(null, t.paste, props.onPaste, { disabled: !props.canPaste, shortcut: "Mod+v" })}
+            {row("trash", t.deleteLayer, props.onDelete, { disabled: !props.canDelete, shortcut: "Del" })}
           </>}
           {menu === "view" && <>
             {row("minus", t.zoomOut, props.onZoomOut, { disabled: !props.canZoomOut })}

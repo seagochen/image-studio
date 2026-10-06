@@ -43,3 +43,13 @@ export function bindCanvasShortcuts<Action extends string>(
     surface.removeEventListener("blur", endComposition);
   };
 }
+
+export type EditAction = "copy" | "cut" | "paste" | "delete";
+
+export function editShortcutAction(event: ShortcutEvent): EditAction | null {
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey) return null;
+  if (event.key === "Delete" && !event.ctrlKey && !event.metaKey) return "delete";
+  if (event.ctrlKey === event.metaKey) return null;
+  const key = event.key.toLowerCase();
+  return key === "c" ? "copy" : key === "x" ? "cut" : key === "v" ? "paste" : null;
+}

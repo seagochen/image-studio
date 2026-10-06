@@ -1,4 +1,4 @@
-import { bindCanvasShortcuts } from "./shortcuts";
+import { editShortcutAction, type EditAction, bindCanvasShortcuts } from "./shortcuts";
 export const SHORTCUT_ACTIONS = ["undo","redo","select","hand","brush","eraser","eyedropper","text","shape","marquee","magicWand","airbrush","smudge","clone","gradient","fit"] as const;
 export type ShortcutAction = typeof SHORTCUT_ACTIONS[number];
 export type ShortcutBindings = Record<ShortcutAction,string>;
@@ -41,6 +41,6 @@ export function configuredShortcutAction(event: KeyEvent, bindings: ShortcutBind
   if (event.ctrlKey && key === "Mod+y" && bindings.redo === DEFAULT_SHORTCUTS.redo) return "redo";
   return null;
 }
-export function bindConfiguredShortcuts(surface: HTMLElement, bindings: ShortcutBindings, execute: (action: ShortcutAction) => void): () => void {
-  return bindCanvasShortcuts(surface, (event) => event.repeat ? null : configuredShortcutAction(event,bindings), execute);
+export function bindConfiguredShortcuts(surface: HTMLElement, bindings: ShortcutBindings, execute: (action: ShortcutAction | EditAction) => void): () => void {
+  return bindCanvasShortcuts(surface, (event) => event.repeat ? null : editShortcutAction(event) ?? configuredShortcutAction(event,bindings), execute);
 }
