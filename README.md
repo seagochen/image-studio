@@ -197,7 +197,7 @@ npm run check:bundle     # 构建后检查 bundle 中没有服务端凭证引用
 ```
 
 路线图与范围取舍见 [docs/ROADMAP.md](docs/ROADMAP.md)（#2）；实体数位笔验收见 [docs/pen-acceptance.md](docs/pen-acceptance.md)（#3）。
-PhotoCraft 布局的浅色工作台、命令搜索、工具选项栏、历史面板和快捷图层变换见 [docs/photocraft-workbench.md](docs/photocraft-workbench.md)。
+PhotoCraft 布局的浅色工作台、命令搜索、历史跳转、可调整面板、文字编辑、选区存档、参考线、可编辑滤镜链及路径/矢量蒙版见 [docs/photocraft-workbench.md](docs/photocraft-workbench.md)。
 
 目录结构：
 

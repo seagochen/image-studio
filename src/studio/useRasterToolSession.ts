@@ -320,7 +320,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
   }, [shapeTool]);
 
   const colorAnnotation = useCallback((element: AnnotationElement): AnnotationElement => {
-    if (element.kind === "text") return { ...element, fontFamily: textTemplate.fontFamily, fontSize: textTemplate.fontSize, align: textTemplate.align, fill: paintColor };
+    if (element.kind === "text") return { ...element, fontFamily: textTemplate.fontFamily, fontSize: textTemplate.fontSize, fontWeight: textTemplate.fontWeight, italic: textTemplate.italic, letterSpacing: textTemplate.letterSpacing, lineHeight: textTemplate.lineHeight, align: textTemplate.align, fill: paintColor };
     const styled = { ...element, stroke: paintColor, strokeWidth: shapeTemplate.strokeWidth };
     if (styled.kind === "rect") return { ...styled, fill: shapeTemplate.fill, cornerRadius: shapeTemplate.cornerRadius };
     if (styled.kind === "ellipse" || styled.kind === "polygon") return { ...styled, fill: shapeTemplate.fill };

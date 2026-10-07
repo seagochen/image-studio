@@ -4,7 +4,7 @@ import {
   MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS, MAX_LAYERS,
 } from "./imageStudioDomain";
 
-export const IMAGE_STUDIO_DOCUMENT_VERSION = 13 as const;
+export const IMAGE_STUDIO_DOCUMENT_VERSION = 14 as const;
 export const MAX_SELECTION_MASK_RUNS = 100_000;
 
 export type ImageStudioDocumentContractErrorCode = "invalid" | "future_version" | "embedded_binary";
@@ -71,6 +71,29 @@ export function normalizeImageStudioDocument(
   validateGeneralRasterMasks(layers);
   if (source.selection.layerId !== null && !layerIds.has(source.selection.layerId)) invalid("Invalid Image Studio selection");
 
+  const extras: Record<string, any> = {};
+  if(source.selectionArchives !== undefined) {
+    if(!Array.isArray(source.selectionArchives) || source.selectionArchives.length>32) invalid("Invalid selection archives");
+    const ids=new Set<string>();
+    extras.selectionArchives=source.selectionArchives.map((archive:unknown)=>{
+      if(!record(archive) || typeof archive.id!=="string" || !archive.id || archive.id.length>200 || ids.has(archive.id)
+        || typeof archive.name!=="string" || archive.name.length>200 || !positive(archive.width) || !positive(archive.height)
+        || !Number.isInteger(archive.width) || !Number.isInteger(archive.height) || archive.width>MAX_CANVAS_EDGE || archive.height>MAX_CANVAS_EDGE || archive.width*archive.height>16_777_216
+        || !Array.isArray(archive.runs) || archive.runs.length<2 || archive.runs.length>MAX_SELECTION_MASK_RUNS
+        || archive.runs.some((run:unknown,index:number)=>!Number.isInteger(run)||(index===0?(run as number)<0:(run as number)<=0))
+        || archive.runs.reduce((sum:number,run:number)=>sum+run,0)!==archive.width*archive.height) invalid("Invalid selection archive");
+      ids.add(archive.id);return {id:archive.id,name:archive.name,width:archive.width,height:archive.height,runs:[...archive.runs]};
+    });
+  }
+  if(source.guides !== undefined) {
+    if(!Array.isArray(source.guides) || source.guides.length>100) invalid("Invalid canvas guides");
+    const ids=new Set<string>();
+    extras.guides=source.guides.map((guide:unknown)=>{
+      if(!record(guide)||typeof guide.id!=="string"||!guide.id||guide.id.length>200||ids.has(guide.id)
+        || !["x","y"].includes(guide.axis)||!finite(guide.position)||Math.abs(guide.position)>1_000_000) invalid("Invalid canvas guide");
+      ids.add(guide.id);return {id:guide.id,axis:guide.axis,position:guide.position};
+    });
+  }
   return {
     version: IMAGE_STUDIO_DOCUMENT_VERSION,
     id: source.id,
@@ -80,6 +103,7 @@ export function normalizeImageStudioDocument(
     brushSettings: buildBrushSettings(source.brushSettings),
     selection: { layerId: source.selection.layerId },
     metadata: { createdAt: source.metadata.createdAt, updatedAt: source.metadata.updatedAt },
+    ...extras,
   };
 }
 
@@ -166,6 +190,34 @@ function buildLayer(value: unknown, options: NormalizeOptions): Record<string, a
     transform: { x: value.transform.x, y: value.transform.y, scaleX: value.transform.scaleX, scaleY: value.transform.scaleY, rotation: value.transform.rotation },
     parentId: value.parentId ?? null,
   };
+  if(value.vectorMask !== undefined) {
+    if(!["raster","paint","annotation"].includes(value.type)||!record(value.vectorMask)||value.vectorMask.path?.kind!=="path"||value.vectorMask.path.closed!==true||(value.vectorMask.inverted!==undefined&&typeof value.vectorMask.inverted!=="boolean")) invalid("Invalid vector mask");
+    base.vectorMask={path:buildAnnotationElement(value.vectorMask.path),...(value.vectorMask.inverted?{inverted:true}:{})};
+  }
+  if(value.filters !== undefined) {
+    if(!["raster","paint","annotation"].includes(value.type)||!Array.isArray(value.filters)||value.filters.length>8) invalid("Invalid layer filters");
+    const ids=new Set<string>();
+    base.filters=value.filters.map((filter:unknown)=>{
+      if(!record(filter)||typeof filter.id!=="string"||!filter.id||filter.id.length>200||ids.has(filter.id)||typeof filter.enabled!=="boolean"
+        || !finite(filter.opacity)||filter.opacity<0||filter.opacity>1) invalid("Invalid layer filter");
+      ids.add(filter.id);const result:Record<string,any>={id:filter.id,enabled:filter.enabled,opacity:filter.opacity,kind:filter.kind};
+      if(filter.kind==="adjustment") {
+        if(!record(filter.adjustment)||!ADJUSTMENT_KINDS.includes(filter.adjustment.kind)||!record(filter.adjustment.parameters))invalid("Invalid filter adjustment");
+        const parameters=buildAdjustmentParameters(filter.adjustment.kind,filter.adjustment.parameters);
+        if(!validAdjustmentParameters(filter.adjustment.kind,parameters))invalid("Invalid filter adjustment");
+        result.adjustment={kind:filter.adjustment.kind,parameters};
+      }else if(filter.kind==="blur") {if(!finite(filter.radius)||filter.radius<0||filter.radius>32)invalid("Invalid blur filter");result.radius=filter.radius;}
+      else if(filter.kind==="sharpen") {if(!finite(filter.amount)||filter.amount<0||filter.amount>2)invalid("Invalid sharpen filter");result.amount=filter.amount;}
+      else invalid("Unknown layer filter");
+      if(filter.maskRuns!==undefined) {
+        if(!Array.isArray(filter.maskRuns)||filter.maskRuns.length<2||filter.maskRuns.length>MAX_SELECTION_MASK_RUNS
+          || filter.maskRuns.some((run:unknown,i:number)=>!Number.isInteger(run)||(i===0?(run as number)<0:(run as number)<=0))
+          || filter.maskRuns.reduce((sum:number,run:number)=>sum+run,0)!==value.width*value.height)invalid("Invalid layer filter mask");
+        result.maskRuns=[...filter.maskRuns];
+      }
+      return result;
+    });
+  }
   if (value.effects !== undefined) {
     if (!["raster", "paint", "annotation"].includes(value.type) || !record(value.effects)) invalid("Invalid Image Studio layer effects");
     const effects: Record<string, any> = {};
@@ -429,12 +481,25 @@ function buildAnnotationElements(value: unknown): Record<string, any>[] {
 function buildAnnotationElement(value: unknown): Record<string, any> {
   if (!record(value) || typeof value.id !== "string" || value.id.length < 1 || value.id.length > 200) invalid("Invalid Image Studio annotation element");
   const id = value.id;
+  if(value.kind === "path") {
+    const point=(p:any)=>record(p)&&finite(p.x)&&finite(p.y)&&Math.abs(p.x)<=1_000_000&&Math.abs(p.y)<=1_000_000;
+    if(!Array.isArray(value.nodes)||value.nodes.length<2||value.nodes.length>1000||typeof value.closed!=="boolean"||!validFill(value.fill)||!validStroke(value)||value.nodes.some((n:any)=>!point(n)||(n.in!==undefined&&!point(n.in))||(n.out!==undefined&&!point(n.out)))) invalid("Invalid vector path");
+    return {id,kind:"path",closed:value.closed,fill:value.fill,stroke:value.stroke,strokeWidth:value.strokeWidth,nodes:value.nodes.map((n:any)=>({x:n.x,y:n.y,...(n.in?{in:{x:n.in.x,y:n.in.y}}:{}),...(n.out?{out:{x:n.out.x,y:n.out.y}}:{})}))};
+  }
   if (value.kind === "text") {
     if (!finite(value.x) || !finite(value.y) || !positive(value.width) || !finite(value.rotation)
       || typeof value.text !== "string" || value.text.length > 5000 || typeof value.fontFamily !== "string"
       || value.fontFamily.length < 1 || value.fontFamily.length > 100 || !positive(value.fontSize) || value.fontSize > 400
       || !validColor(value.fill) || !["left", "center", "right"].includes(value.align)) invalid("Invalid Image Studio annotation text element");
-    return { id, kind: "text", x: value.x, y: value.y, width: value.width, rotation: value.rotation, text: value.text, fontFamily: value.fontFamily, fontSize: value.fontSize, fill: value.fill, align: value.align };
+    const typography: Record<string, any> = {};
+    for (const [key,min,max] of [["fontWeight",100,900],["letterSpacing",-10,100],["lineHeight",.5,5]] as const) {
+      if(value[key] !== undefined) {
+        if(!finite(value[key]) || value[key]<min || value[key]>max) invalid("Invalid Image Studio typography");
+        typography[key]=value[key];
+      }
+    }
+    if(value.italic !== undefined) {if(typeof value.italic !== "boolean") invalid("Invalid Image Studio typography");typography.italic=value.italic;}
+    return { id, kind: "text", x: value.x, y: value.y, width: value.width, rotation: value.rotation, text: value.text, fontFamily: value.fontFamily, fontSize: value.fontSize, fill: value.fill, align: value.align, ...typography };
   }
   if (value.kind === "rect") {
     if (!positionedShape(value) || !positive(value.width) || !positive(value.height) || !validFill(value.fill)

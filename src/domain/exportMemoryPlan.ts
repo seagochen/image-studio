@@ -47,7 +47,9 @@ export function estimateRenderPeak(document: ImageStudioDocument): number {
         peak = Math.max(peak, combine, maskBytes + work);
       } else {
         const effectBytes = layer.effects ? layerBytes + (layer.effects.stroke ? (layer.width + Math.ceil(layer.effects.stroke.width)*2) * (layer.height + Math.ceil(layer.effects.stroke.width)*2) * 4 : 0) : 0;
-        peak = Math.max(peak, layerBytes + (layer.rasterMaskId ? layerBytes + Math.max(ownedMaskWork(layer), effectBytes) : effectBytes));
+        const filterBytes = layer.filters?.some(filter=>filter.enabled&&filter.opacity>0)
+          ? layerBytes*2 + layer.width*layer.height + Math.min(layer.height,Math.max(1,Math.floor(ADJUSTMENT_CHUNK_PIXELS/layer.width))+64)*layer.width*56 : 0;
+        peak = Math.max(peak, layerBytes + filterBytes + (layer.rasterMaskId || layer.vectorMask ? layerBytes + Math.max(ownedMaskWork(layer), effectBytes) : effectBytes));
       }
     }
     return peak;

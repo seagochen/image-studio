@@ -58,7 +58,7 @@ export function AdjustmentEditorDialog({ document: baseDocument, draft, sourceLa
   const previewHistogram = useMemo(() => previewCanvas ? previewLuminosityHistogram(previewCanvas) : undefined, [previewCanvas]);
 
   const sourceLayer = sourceLayerId ? baseDocument.layers.find((candidate) => candidate.id === sourceLayerId) : undefined;
-  const canBake = sourceLayer?.type === "raster" && !sourceLayer.locked && !layer.locked
+  const canBake = sourceLayer?.type === "raster" && !sourceLayer.locked && !layer.locked && !sourceLayer.effects && !sourceLayer.filters?.length && !sourceLayer.vectorMask
     && (selection ? Boolean(sourceLayerId && canBakeSelectedAdjustment(baseDocument, sourceLayerId, selection, layer))
       : !sourceLayer.rasterMaskId);
   const title = ADJUSTMENT_KIND_LABELS[locale][layer.adjustment.kind];

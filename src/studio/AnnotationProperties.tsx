@@ -33,6 +33,12 @@ export function AnnotationProperties({ element, locale, disabled, focusRequest =
       </select></label>
       <label>{labels.size}<input type="number" min="1" max="400" value={element.fontSize}
         onChange={(event) => number(event.target.value, 1, 400, (fontSize) => onChange({ ...element, fontSize }, "fontSize"))} /></label>
+      <label>{labels.weight}<select value={element.fontWeight ?? 400} onChange={event=>onChange({...element,fontWeight:Number(event.target.value)},"fontWeight")}>
+        {[100,200,300,400,500,600,700,800,900].map(weight=><option key={weight} value={weight}>{weight}</option>)}
+      </select></label>
+      <label className="brush-check"><input type="checkbox" checked={element.italic ?? false} onChange={event=>onChange({...element,italic:event.target.checked},"italic")} />{labels.italic}</label>
+      <label>{labels.spacing}<input type="number" min="-10" max="100" step=".1" value={element.letterSpacing ?? 0} onChange={event=>number(event.target.value,-10,100,letterSpacing=>onChange({...element,letterSpacing},"letterSpacing"))} /></label>
+      <label>{labels.leading}<input type="number" min=".5" max="5" step=".1" value={element.lineHeight ?? 1.2} onChange={event=>number(event.target.value,.5,5,lineHeight=>onChange({...element,lineHeight},"lineHeight"))} /></label>
       <label>{labels.color}<input type="color" value={element.fill} onChange={(event) => onChange({ ...element, fill: event.target.value }, "fill")} /></label>
       <label>{labels.align}<select value={element.align} onChange={(event) => onChange({ ...element, align: event.target.value as "left" | "center" | "right" }, "align")}>
         {(["left", "center", "right"] as const).map((align) => <option key={align} value={align}>{labels[align]}</option>)}

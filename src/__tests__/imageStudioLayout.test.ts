@@ -94,7 +94,7 @@ describe("history jumps and effects persistence", () => {
         const effects = { shadow: { color: "#000000", opacity: .35, blur: 8, offsetX: 6, offsetY: 6 }, stroke: { color: "#ffffff", opacity: 1, width: 2 } };
         const styled = { ...document, layers: [{ ...paint, effects }] };
         expect(parseDocument(serializeDocument(styled)).layers[0].effects).toEqual(effects);
-        expect(parseDocument(JSON.stringify({ ...document, version: 12 })).version).toBe(13);
+        expect(parseDocument(JSON.stringify({ ...document, version: 12 })).version).toBe(14);
         expect(() => parseDocument(JSON.stringify({ ...styled, layers: [{ ...paint, effects: { stroke: { color: "red", opacity: 1, width: 2 } } }] }))).toThrow("effect");
         expect(() => parseDocument(JSON.stringify({ ...styled, layers: [{ ...paint, effects: { ...effects, stroke: { ...effects.stroke, width: 17 } } }] }))).toThrow("stroke");
     });

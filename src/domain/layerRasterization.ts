@@ -1,3 +1,5 @@
+import { tracePath } from "./vectorPath";
+import { renderText } from "./textLayout";
 import type { AnnotationLayer, DrawingLayer } from "./document";
 import { paintSelectionRuns } from "./selectionMaskRuns";
 import { createBrushDabs, renderBrushDabs } from "./brushEngine";
@@ -45,14 +47,16 @@ export function renderAnnotationLayer(layer: AnnotationLayer, createCanvas: (wid
       if ("stroke" in element) { context.strokeStyle = element.stroke; context.lineWidth = element.strokeWidth; context.lineCap = "round"; context.lineJoin = "round"; }
       if ("fill" in element) context.fillStyle = element.fill;
       switch (element.kind) {
+        case "path": {
+          tracePath(context,element);
+          if(element.closed&&element.fill!=="transparent")context.fill();
+          if(element.strokeWidth>0)context.stroke();
+          break;
+        }
         case "text": {
           context.translate(element.x, element.y);
           context.rotate(element.rotation * Math.PI / 180);
-          context.textBaseline = "top";
-          context.textAlign = element.align;
-          context.font = `${element.fontSize}px ${element.fontFamily}`;
-          const originX = element.align === "center" ? element.width / 2 : element.align === "right" ? element.width : 0;
-          element.text.split("\n").forEach((line, index) => context.fillText(line, originX, index * element.fontSize * 1.2));
+          renderText(context, element);
           break;
         }
         case "rect": {

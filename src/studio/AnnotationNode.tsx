@@ -1,4 +1,5 @@
-import { Arrow, Ellipse, Group, Line, Rect, RegularPolygon, Text } from "react-konva";
+import { pathData } from "../domain/vectorPath";
+import { Path, Arrow, Ellipse, Group, Line, Rect, RegularPolygon, Text } from "react-konva";
 import type Konva from "konva";
 import { canvasBlendMode, type AnnotationLayer } from "../domain/document";
 
@@ -31,9 +32,11 @@ export function AnnotationNode({ layer, selectable, transformable = true, onSele
           onDblTap: (event: Konva.KonvaEventObject<TouchEvent>) => { event.cancelBubble = true; if (!layer.locked) onEdit?.(element.id); },
         };
         switch (element.kind) {
+          case "path":
+            return <Path key={element.id} {...events} data={pathData(element)} fill={element.closed&&element.fill!=="transparent"?element.fill:undefined} stroke={element.stroke} strokeWidth={element.strokeWidth} listening={selectable} />;
           case "text":
             return <Text key={element.id} {...events} x={element.x} y={element.y} width={element.width} rotation={element.rotation}
-              text={element.text} name="annotation-text" fontFamily={element.fontFamily} fontSize={element.fontSize} fill={element.fill} align={element.align} listening={selectable} />;
+              text={element.text} wrap="char" name="annotation-text" fontFamily={element.fontFamily} fontSize={element.fontSize} fontStyle={`${element.italic ? "italic" : "normal"} ${element.fontWeight ?? 400}`} letterSpacing={element.letterSpacing ?? 0} lineHeight={element.lineHeight ?? 1.2} fill={element.fill} align={element.align} listening={selectable} />;
           case "rect":
             return <Rect key={element.id} {...events} x={element.x} y={element.y} width={element.width} height={element.height} rotation={element.rotation}
               fill={element.fill === "transparent" ? undefined : element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth}

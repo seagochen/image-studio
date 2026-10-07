@@ -83,5 +83,6 @@ export function duplicateAnnotationElement(element: AnnotationElement): Annotati
   copy.id = createId(`annot-${copy.kind}`);
   if ("x" in copy) { copy.x += 16; copy.y += 16; }
   if ("points" in copy) copy.points = copy.points.map((point) => ({ x: point.x + 16, y: point.y + 16 })) as unknown as typeof copy.points;
+  if(copy.kind==="path")copy.nodes=copy.nodes.map(node=>({...node,x:node.x+16,y:node.y+16,...(node.in?{in:{x:node.in.x+16,y:node.in.y+16}}:{}),...(node.out?{out:{x:node.out.x+16,y:node.out.y+16}}:{})}));
   return copy;
 }

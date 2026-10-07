@@ -17,7 +17,7 @@ export const ADJUSTMENT_KINDS = [
 ] as const;
 export type AdjustmentKind = typeof ADJUSTMENT_KINDS[number];
 
-export const ANNOTATION_ELEMENT_KINDS = ["text", "rect", "ellipse", "polygon", "freehand", "line", "arrow"] as const;
+export const ANNOTATION_ELEMENT_KINDS = ["text", "rect", "ellipse", "polygon", "freehand", "line", "arrow", "path"] as const;
 export type AnnotationElementKind = typeof ANNOTATION_ELEMENT_KINDS[number];
 
 export const BRUSH_PRESET_IDS = ["hard-round", "soft-round", "pencil", "marker", "texture", "scatter"] as const;

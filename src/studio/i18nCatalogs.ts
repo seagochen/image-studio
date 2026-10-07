@@ -1,3 +1,7 @@
+import { pathCopy } from "./CanvasPathEditor";
+import { filterCopy } from "./LayerFiltersPanel";
+import { layoutCopy } from "./layoutCopy";
+import { selectionRefinementCopy } from "./SelectionRefinementPanel";
 // Registry of every per-locale text catalog used across Image Studio (Issue #165):
 // tools, brushes, layers, file menu, perspective correction, properties, adjustments and
 // the conventional raster editor each own their catalog file/section, but all of them are
@@ -16,6 +20,10 @@ import { quickTransformCopy, selectionCommandCopy, workbenchCopy } from "./workb
 import { editingCopy } from "./editingCopy";
 
 export const IMAGE_STUDIO_LOCALE_CATALOGS: Record<string, Record<string, Record<string, string>>> = {
+  selectionRefinement: selectionRefinementCopy,
+  layout: layoutCopy,
+  paths: pathCopy,
+  filters: filterCopy,
   editing: editingCopy,
   core: CORE_LABELS,
   property: PROPERTY_LABELS,

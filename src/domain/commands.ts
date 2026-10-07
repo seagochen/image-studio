@@ -64,9 +64,10 @@ export function attachPaintAsRasterMask(document: ImageStudioDocument, paintId: 
   const owner = document.layers.find((layer) => layer.id === ownerId);
   if (!paint || paint.type !== "paint" || !owner || !["raster", "paint", "annotation", "group"].includes(owner.type)
     || owner.id === paint.id || owner.locked || paint.locked || owner.rasterMaskId
+    || paint.effects || paint.filters?.length || paint.vectorMask
     || paint.parentId !== owner.parentId || paint.width !== owner.width || paint.height !== owner.height
     || !sameTransform(paint.transform, owner.transform)) return document;
-  const layers = document.layers.map((layer) => layer.id === paint.id ? { ...paint, type: "mask" as const } : layer.id === owner.id ? { ...owner, rasterMaskId: paint.id } : layer);
+  const layers = document.layers.map((layer) => layer.id === paint.id ? { ...paint, type: "mask" as const, filters:undefined, effects:undefined, vectorMask:undefined } : layer.id === owner.id ? { ...owner, rasterMaskId: paint.id } : layer);
   return updateStructure(document, layers);
 }
 
@@ -444,7 +445,7 @@ export function replaceRasterLayer(
 ): ImageStudioDocument {
   const layer = document.layers.find((candidate) => candidate.id === layerId);
   if (!layer || layer.type !== "raster" || layer.locked) return document;
-  if (layer.rasterMaskId && (replacement.width !== layer.width || replacement.height !== layer.height)) return document;
+  if ((layer.rasterMaskId || layer.vectorMask) && (replacement.width !== layer.width || replacement.height !== layer.height)) return document;
   // Most callers replace a layer's own local pixels, so keeping its x/y anchor is correct.
   // A caller compositing a full-canvas, already-absolutely-positioned result (e.g. baking an
   // adjustment) passes resetPosition so that position isn't applied a second time on top.

@@ -22,7 +22,12 @@ export interface LayerEffects {
   stroke?: { color: string; opacity: number; width: number };
 }
 
+export type LayerFilter = {id:string;enabled:boolean;opacity:number;maskRuns?:number[]} & (
+ {kind:"adjustment";adjustment:AdjustmentDefinition} | {kind:"blur";radius:number} | {kind:"sharpen";amount:number}
+);
 interface LayerBase {
+  vectorMask?: {path:AnnotationPathElement;inverted?:boolean};
+  filters?: LayerFilter[];
   effects?: LayerEffects;
   id: string;
   name: string;
@@ -85,6 +90,10 @@ export interface AnnotationTextElement {
   text: string;
   fontFamily: string;
   fontSize: number;
+  fontWeight?: number;
+  italic?: boolean;
+  letterSpacing?: number;
+  lineHeight?: number;
   fill: string;
   align: "left" | "center" | "right";
 }
@@ -153,7 +162,11 @@ export interface AnnotationArrowElement {
   strokeWidth: number;
 }
 
+export interface PathNode extends Point { in?:Point; out?:Point }
+export interface AnnotationPathElement {id:string;kind:"path";nodes:PathNode[];closed:boolean;fill:string;stroke:string;strokeWidth:number}
+
 export type AnnotationElement =
+  | AnnotationPathElement
   | AnnotationTextElement
   | AnnotationRectElement
   | AnnotationEllipseElement
@@ -190,7 +203,11 @@ export interface AdjustmentLayer extends LayerBase {
 
 export type ImageStudioLayer = RasterLayer | DrawingLayer | AnnotationLayer | GroupLayer | AdjustmentLayer;
 
+export interface SelectionArchive {id:string;name:string;width:number;height:number;runs:number[]}
+export interface CanvasGuide {id:string;axis:"x"|"y";position:number}
 export interface ImageStudioDocument {
+  selectionArchives?: SelectionArchive[];
+  guides?: CanvasGuide[];
   version: typeof IMAGE_STUDIO_DOCUMENT_VERSION;
   id: string;
   title: string;

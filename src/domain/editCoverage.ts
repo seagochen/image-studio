@@ -1,3 +1,4 @@
+import { tracePath } from "./vectorPath";
 import type { AdjustmentDefinition, AdjustmentLayer, DrawingLayer, ImageStudioDocument, LayerBlendMode, RasterLayer } from "./document";
 import { layerIsEditable } from "./layerHierarchy";
 import { adjustmentKernel, isSpatialAdjustment } from "./adjustmentEngine";
@@ -27,6 +28,20 @@ export function resolveRasterEditCoverage(
       throw new Error("Raster mask binding is invalid");
     }
     coverage = coverageFromDrawingMask(mask, layer.rasterMaskInverted === true, layer.rasterMaskFeatherPx ?? 0, createCanvas);
+  }
+  if(layer.vectorMask) {
+    if(length>16_777_216)throw new Error("Vector mask edit coverage exceeds pixel limit");
+    const canvas=createCanvas(layer.width,layer.height);
+    try {
+      const context=canvas.getContext("2d");if(!context)throw new Error("Vector mask canvas is unavailable");
+      context.fillStyle="#fff";tracePath(context,layer.vectorMask.path);context.fill();
+      const alpha=context.getImageData(0,0,layer.width,layer.height).data;
+      coverage ??= new Uint8Array(length).fill(255);
+      for(let index=0;index<length;index++) {
+        const weight=layer.vectorMask.inverted?255-alpha[index*4+3]:alpha[index*4+3];
+        coverage[index]=Math.round(coverage[index]*weight/255);
+      }
+    }finally{canvas.width=1;canvas.height=1;}
   }
   if (selection) {
     coverage ??= new Uint8Array(length).fill(255);
@@ -142,6 +157,7 @@ export function canBakeSelectedAdjustment(document: ImageStudioDocument, sourceI
   selection: PixelSelectionMask, adjustment: AdjustmentLayer): boolean {
   const source = document.layers.find((layer) => layer.id === sourceId);
   if (!source || source.type !== "raster" || !source.visible || !layerIsEditable(document.layers, sourceId)
+    || source.filters?.length || source.effects || source.vectorMask
     || source.opacity !== 1 || source.blendMode !== "normal" || adjustment.locked
     || isSpatialAdjustment(adjustment.adjustment.kind)
     || source.width !== selection.width || source.height !== selection.height

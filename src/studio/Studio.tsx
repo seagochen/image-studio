@@ -1,3 +1,10 @@
+import { CanvasPathEditor, pathCopy } from "./CanvasPathEditor";
+import { LayerFiltersPanel } from "./LayerFiltersPanel";
+import { CanvasGuides } from "./CanvasGuides";
+import { layoutCopy } from "./layoutCopy";
+import { encodeSelectionRuns, decodeSelectionRuns } from "../domain/selectionMaskRuns";
+import { CanvasTextEditor } from "./CanvasTextEditor";
+import { SelectionRefinementPanel } from "./SelectionRefinementPanel";
 import { LayerEffectsPanel } from "./LayerEffectsPanel";
 import { CanvasCrop } from "./CanvasCrop";
 import { cropCanvas, snapLayer } from "../domain/layoutCommands";
@@ -109,8 +116,11 @@ export function Studio(): JSX.Element {
   const [tool, setTool] = useState<Tool>("select");
   const [selectionOperation, setSelectionOperation] = useState<SelectionOperation>("replace");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("properties");
+  const [pathEditing,setPathEditing]=useState<{layerId?:string;mask:boolean;initial?:import("../domain/document").AnnotationPathElement}|null>(null);
+  useEffect(()=>{setPathEditing(null);},[document.id]);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [textFocusRequest, setTextFocusRequest] = useState(0);
+  const [textEditing, setTextEditing] = useState<{layerId:string;elementId:string} | null>(null);
   const [textTemplate, setTextTemplate] = useState(() => createTextElement({ x: 0, y: 0 }) as AnnotationTextElement);
   const [shapeTemplate, setShapeTemplate] = useState(() => createRectElement({ x: 0, y: 0 }, { x: 100, y: 100 }) as AnnotationRectElement);
   const [smudgeStrength, setSmudgeStrength] = useState(0.35);
@@ -136,6 +146,9 @@ export function Studio(): JSX.Element {
   const [shortcutBindings, setShortcutBindings] = useState(loadShortcuts);
   const [adjustmentDraft, setAdjustmentDraft] = useState<{ layer: AdjustmentLayer; sourceLayerId: string | null; selection: PixelSelectionMask | null } | null>(null);
   const [cropOpen, setCropOpen] = useState(false);
+  const [gridEnabled, setGridEnabled] = useState(false);
+  const [rulersEnabled, setRulersEnabled] = useState(false);
+  const [gridSpacing, setGridSpacing] = useState(32);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [historyBusy, setHistoryBusy] = useState(false);
   const historyBusyRef = useRef(false);
@@ -166,7 +179,7 @@ export function Studio(): JSX.Element {
   }, [selected?.id, selectedElement?.id, selectedObjectColor, tool]);
   const propertyLabels = PROPERTY_LABELS[locale];
   const brushSettings = document.brushSettings;
-  const requiresComposite = document.layers.some((layer) => layer.effects || layer.rasterMaskId || layer.type === "group" || layer.type === "adjustment" || layer.type === "paint" || layer.type === "mask");
+  const requiresComposite = document.layers.some((layer) => layer.vectorMask || layer.filters?.length || layer.effects || layer.rasterMaskId || layer.type === "group" || layer.type === "adjustment" || layer.type === "paint" || layer.type === "mask");
   const selectedEditable = selected ? layerIsEditable(document.layers, selected.id) : false;
   const selectedRasterTooLarge = selected?.type === "raster" && selected.width * selected.height > MAX_DIRECT_PIXEL_COUNT;
 
@@ -232,7 +245,7 @@ export function Studio(): JSX.Element {
   const commitLayerTransform = (layerId: string, transform: ImageStudioLayer["transform"], mergeKey?: string) => {
     // A temporary pixel selection cannot authorize moving the whole source layer.
     if (pixelSelection?.layerId === layerId) return;
-    commit((current) => setLayerTransform(current, layerId, snapEnabled && mergeKey?.startsWith("drag:") ? snapLayer(current, layerId, transform, 6 / viewport.scale) : transform), "Transform layer", mergeKey);
+    commit((current) => setLayerTransform(current, layerId, snapEnabled && mergeKey?.startsWith("drag:") ? snapLayer(current, layerId, transform, 6 / viewport.scale, gridEnabled ? gridSpacing : undefined) : transform), "Transform layer", mergeKey);
   };
 
   useEffect(() => {
@@ -387,7 +400,7 @@ export function Studio(): JSX.Element {
     const snapshot = documentRef.current;
     const sourceLayer = snapshot.layers.find((candidate) => candidate.id === sourceLayerId);
     if (!sourceLayer || sourceLayer.type !== "raster" || sourceLayer.locked) return;
-    if (sourceLayer.rasterMaskId) { setError("editFailed"); return; }
+    if (sourceLayer.rasterMaskId || sourceLayer.vectorMask || sourceLayer.filters?.length || sourceLayer.effects) { setError("editFailed"); return; }
     try {
       const pairDocument = {
         ...snapshot,
@@ -411,7 +424,7 @@ export function Studio(): JSX.Element {
 
   useEffect(() => {
     const surface = surfaceRef.current;
-    if (!surface || cropOpen || historyBusy || paletteOpen || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft) return;
+    if (!surface || pathEditing || cropOpen || historyBusy || paletteOpen || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft) return;
     return bindConfiguredShortcuts(surface, shortcutBindings, (action) => {
       if (historyBusyRef.current) return;
       if (action === "undo") undoDocument();
@@ -430,7 +443,7 @@ export function Studio(): JSX.Element {
         setTool(action); setInspectorTab("properties");
       }
     });
-  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, cropOpen, historyBusy, paletteOpen, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
+  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, pathEditing, cropOpen, historyBusy, paletteOpen, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
 
   useEffect(() => {
     const closeMenusOutside = (event: MouseEvent) => {
@@ -448,7 +461,11 @@ export function Studio(): JSX.Element {
     if (edit) {
       setTool("select");
       setInspectorTab("properties");
-      setTextFocusRequest((value) => value + 1);
+      const layer = documentRef.current.layers.find(candidate=>candidate.id===layerId);
+      const element = layer?.type === "annotation" ? layer.elements.find(candidate=>candidate.id===elementId) : undefined;
+      if (element?.kind === "text") setTextEditing({layerId,elementId:element.id});
+      else if(element?.kind==="path")setPathEditing({layerId,mask:false,initial:element});
+      else setTextFocusRequest((value) => value + 1);
     }
   };
   const pickScreenColor = async () => {
@@ -522,6 +539,9 @@ export function Studio(): JSX.Element {
       "filter.filters": { label: t("filters"), enabled: selected?.type === "raster" && selectedEditable, run: () => openRasterEditor("Filters") },
       "filter.perspective": { label: perspectiveCopy[locale].title, enabled: Boolean(selected?.type === "raster" && selectedEditable && !pixelSelection && !selected.rasterMaskId), run: () => openRasterEditor("Perspective") },
       "filter.ai": { label: t("aiEdit"), enabled: canUseAi, run: () => setAiOpen(true) },
+      "view.grid": {label:layoutCopy[locale].grid,enabled:true,run:()=>setGridEnabled(value=>!value)},
+      "view.rulers": {label:layoutCopy[locale].rulers,enabled:true,run:()=>setRulersEnabled(value=>!value)},
+      "edit.path": {label:pathCopy[locale].pen,enabled:true,run:()=>{setTextEditing(null);setCropOpen(false);setPathEditing({mask:false});}},
       "view.fit": { label: t("fit"), enabled: true, run: () => fitView(), shortcut: shortcutBindings.fit },
       "view.actualSize": { label: fileCopy[locale].actualSize, enabled: true, run: actualSize },
       "view.navigator": { label: t("navigator"), enabled: true, run: () => setNavigatorCollapsed((value) => !value) },
@@ -529,7 +549,7 @@ export function Studio(): JSX.Element {
   });
   const modalOpen = aiOpen || deliveryOpen || Boolean(editorInput) || settingsOpen || apiKeyOpen || Boolean(adjustmentDraft);
   useEffect(() => {
-    if (modalOpen || fileBusy || cropOpen || historyBusy) return;
+    if (modalOpen || fileBusy || pathEditing || cropOpen || historyBusy) return;
     const keydown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || event.isComposing || event.altKey || event.ctrlKey === event.metaKey) return;
       const target = event.target as HTMLElement | null;
@@ -546,7 +566,7 @@ export function Studio(): JSX.Element {
     };
     window.document.addEventListener("keydown", keydown);
     return () => window.document.removeEventListener("keydown", keydown);
-  }, [commands, modalOpen, fileBusy, paletteOpen, shortcutBindings, cropOpen, historyBusy]);
+  }, [commands, modalOpen, fileBusy, paletteOpen, shortcutBindings, pathEditing, cropOpen, historyBusy]);
 
   useEffect(() => {
     if (!saveToast) return;
@@ -643,17 +663,35 @@ export function Studio(): JSX.Element {
           onOpenRasterEditor={openRasterEditor} onOpenAi={() => { invokeEditorCommand(commands, "filter.ai"); }} />
         <section className="canvas-column">
           <WorkbenchBar title={document.title} width={document.canvas.width} height={document.canvas.height} locale={locale}
-            onCommands={() => setPaletteOpen(true)} onCrop={() => setCropOpen(true)} snap={snapEnabled} onSnap={() => setSnapEnabled(value => !value)} />
+            onCommands={() => setPaletteOpen(true)} onCrop={() => setCropOpen(true)} snap={snapEnabled} onSnap={() => setSnapEnabled(value => !value)} layoutControls={<>
+              <button onClick={()=>{setTextEditing(null);setCropOpen(false);setPathEditing({mask:false});}}>{pathCopy[locale].pen}</button>
+              <button aria-pressed={gridEnabled} onClick={()=>setGridEnabled(value=>!value)}>{layoutCopy[locale].grid}</button>
+              <button aria-pressed={rulersEnabled} onClick={()=>setRulersEnabled(value=>!value)}>{layoutCopy[locale].rulers}</button>
+              {gridEnabled&&<input className="grid-spacing" aria-label={layoutCopy[locale].spacing} type="number" min="4" max="512" value={gridSpacing} onChange={event=>{const n=event.target.valueAsNumber;if(Number.isFinite(n))setGridSpacing(Math.max(4,Math.min(512,Math.round(n))));}} />}
+              {!!document.guides?.length&&<button onClick={()=>commit(current=>touchDocument({...current,guides:[]}),"Clear guides")}>{layoutCopy[locale].clear}</button>}
+            </>} />
           <div className={`canvas-surface tool-${tool}`} ref={surfaceRef} aria-label={t("canvasLabel")} tabIndex={0} onPointerLeave={() => setCursorPreview(null)}
             onPointerDown={(event) => {
               if (event.target instanceof HTMLCanvasElement) surfaceRef.current?.focus({ preventScroll: true });
             }}>
+          {pathEditing && <CanvasPathEditor key={`${pathEditing.layerId??"new"}:${pathEditing.mask}:${pathEditing.initial?.id??"new"}`} document={document} layer={document.layers.find(layer=>layer.id===pathEditing.layerId)} initial={pathEditing.initial} mask={pathEditing.mask} color={paintColor} viewport={viewport} locale={locale} onClose={()=>setPathEditing(null)} onSave={path=>{
+            if(pathEditing.mask&&pathEditing.layerId)commit(current=>patchLayer(current,pathEditing.layerId!,{vectorMask:{path,inverted:current.layers.find(layer=>layer.id===pathEditing.layerId)?.vectorMask?.inverted}}),"Edit vector mask");
+            else if(pathEditing.layerId)commit(current=>replaceAnnotationElement(current,pathEditing.layerId!,path),"Edit vector path");
+            else commit(current=>addLayer(current,{...createAnnotationLayer(current,"Path"),elements:[path]}),"Add vector path");
+          }} />}
+          {!cropOpen && <CanvasGuides viewport={viewport} width={document.canvas.width} height={document.canvas.height} grid={gridEnabled} spacing={gridSpacing} rulers={rulersEnabled} guides={document.guides??[]} locale={locale}
+            onAdd={(axis,position)=>commit(current=>(current.guides?.length??0)>=100?current:touchDocument({...current,guides:[...(current.guides??[]),{id:createId("guide"),axis,position}]}),"Add guide")}
+            onMove={(id,position)=>commit(current=>touchDocument({...current,guides:current.guides?.map(guide=>guide.id===id?{...guide,position}:guide)}),"Move guide",`guide:${id}`)}
+            onRemove={id=>commit(current=>touchDocument({...current,guides:current.guides?.filter(guide=>guide.id!==id)}),"Delete guide")} />}
+          {textEditing && selected?.type === "annotation" && selected.id === textEditing.layerId && selectedElement?.kind === "text" && selectedElement.id === textEditing.elementId && <CanvasTextEditor
+            key={`${selected.id}:${selectedElement.id}`} document={document} layer={selected} element={selectedElement} viewport={viewport} locale={locale}
+            onSave={element=>commit(current=>replaceAnnotationElement(current,selected.id,element),"Edit text")} onClose={()=>setTextEditing(null)} />}
           {cropOpen && <CanvasCrop key={document.id} width={document.canvas.width} height={document.canvas.height} offsetX={viewport.offsetX} offsetY={viewport.offsetY} scale={viewport.scale} locale={locale}
             onCancel={() => setCropOpen(false)} onApply={rect => { commit(current => cropCanvas(current, rect), "Crop canvas"); setPixelSelection(null); setCropOpen(false); fitView({width:rect.width,height:rect.height}); }} />}
           {document.layers.length === 0 && <label className="empty-state"><strong>{t("emptyTitle")}</strong><span>{t("emptyHint")}</span>
             <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importStudioFile(file); }} /></label>}
           <Stage ref={stageRef} width={surfaceSize.width} height={surfaceSize.height}
-            onPointerDown={cropOpen ? undefined : beginPointer} onPointerMove={cropOpen ? undefined : movePointer} onPointerUp={cropOpen ? undefined : endPointer}
+            onPointerDown={cropOpen || pathEditing ? undefined : beginPointer} onPointerMove={cropOpen || pathEditing ? undefined : movePointer} onPointerUp={cropOpen || pathEditing ? undefined : endPointer}
             onPointerCancel={endPointer}
             onPointerEnter={movePointer} onPointerLeave={() => setCursorPreview(null)}>
             <Layer listening={false}>
@@ -738,10 +776,13 @@ export function Studio(): JSX.Element {
             <button disabled={!history.canRedo} onClick={redoDocument}>{t("redo")}</button>
           </div>
         </section>
-        <Inspector activeTab={inspectorTab} layerCount={document.layers.length} t={t} onTabChange={setInspectorTab}
+        <Inspector locale={locale} activeTab={inspectorTab} layerCount={document.layers.length} t={t} onTabChange={setInspectorTab}
           history={<HistoryPanel timeline={historyRef.current.timeline} locale={locale} onUndo={undoDocument} onRedo={redoDocument} onSeek={index => void restoreHistory(index)} disabled={historyBusy} t={t} />}
           properties={<>
             {selectedRasterTooLarge && <p className="panel-empty">{t("pixelTooLarge")}</p>}
+            {selected && <LayerFiltersPanel layer={selected} locale={locale} disabled={!selectedEditable}
+              selectionRuns={pixelSelection?.layerId===selected.id?()=>encodeSelectionRuns(pixelSelection):undefined}
+              onChange={filters=>commit(current=>patchLayer(current,selected.id,{filters}),"Edit live filters",`filters:${selected.id}`)} />}
             {selected && <LayerEffectsPanel layer={selected} locale={locale} disabled={!selectedEditable || pixelSelection?.layerId === selected.id}
               onChange={effects => commit(current => patchLayer(current, selected.id, {effects}), "Change layer effects", `effects:${selected.id}`)} />}
             {selected && !["mask", "adjustment"].includes(selected.type) && <LayerTransformProperties layer={selected} locale={locale}
@@ -794,8 +835,14 @@ export function Studio(): JSX.Element {
             {SELECTION_TOOLS.includes(tool) && <div className="tool-parameters"><label>{t("selectionOperation")}<select value={selectionOperation} onChange={(event) => setSelectionOperation(event.target.value as SelectionOperation)}>
               {(["replace", "add", "subtract", "intersect"] as SelectionOperation[]).map((operation) => <option key={operation} value={operation}>{t(`selection${operation[0].toUpperCase()}${operation.slice(1)}` as MessageKey)}</option>)}
             </select></label></div>}
+            {selected && ["raster","paint","annotation"].includes(selected.type) && <SelectionRefinementPanel selection={pixelSelection} locale={locale} onChange={setPixelSelection}
+              archives={(document.selectionArchives??[]).filter(archive=>archive.width===selected.width&&archive.height===selected.height)}
+              onStore={()=>{if(!pixelSelection||(document.selectionArchives?.length??0)>=32)return;try {const runs=encodeSelectionRuns(pixelSelection);commit(current=>touchDocument({...current,selectionArchives:[...(current.selectionArchives??[]),{id:createId("selection"),name:`${selected.name.slice(0,180)} ${(current.selectionArchives?.length??0)+1}`,width:pixelSelection.width,height:pixelSelection.height,runs}]}),"Store selection");}catch{setError("editFailed");}}}
+              onRestore={archive=>setPixelSelection({layerId:selected.id,width:archive.width,height:archive.height,pixels:decodeSelectionRuns(archive.runs,archive.width,archive.height)})}
+              onRemove={id=>commit(current=>touchDocument({...current,selectionArchives:current.selectionArchives?.filter(archive=>archive.id!==id)}),"Remove stored selection")} />}
             {pixelSelection && <div className="selection-controls">
               <span>{t("selectionReady")}</span>
+
               <button disabled={!selected || !selectedEditable || selectedRasterTooLarge || selected.type !== "raster" || selected.id !== pixelSelection.layerId}
                 onClick={clearPixelSelection}>{t("clearSelectedPixels")}</button>
               <button disabled={!selected || selected.id !== pixelSelection.layerId || (selected.type === "raster"
@@ -810,11 +857,15 @@ export function Studio(): JSX.Element {
               <label>{t("brushSize")}<output>{selected.rasterMaskFeatherPx ?? 0}px</output><input type="range" min="0" max="256" value={selected.rasterMaskFeatherPx ?? 0}
                 onChange={(event) => { const value = Number(event.target.value); commit((current) => patchLayer(current, selected.id, { rasterMaskFeatherPx: value || undefined }), "Feather raster mask", `mask-feather:${selected.id}`); }} /></label>
             </div>}
-            {selected?.type === "paint" && <div className="tool-parameters"><label>{t("maskLayer")}<select defaultValue="" onChange={(event) => event.target.value && commit((current) => attachPaintAsRasterMask(current, selected.id, event.target.value), "Attach paint as raster mask")}><option value="">{t("noSelection")}</option>{document.layers.filter((layer) => layer.id !== selected.id && !layer.rasterMaskId && layer.parentId === selected.parentId && layer.width === selected.width && layer.height === selected.height && ["raster", "paint", "annotation", "group"].includes(layer.type)).map((layer) => <option key={layer.id} value={layer.id}>{layer.name}</option>)}</select></label></div>}
+            {selected?.type === "paint" && !selected.effects && !selected.filters?.length && !selected.vectorMask && <div className="tool-parameters"><label>{t("maskLayer")}<select defaultValue="" onChange={(event) => event.target.value && commit((current) => attachPaintAsRasterMask(current, selected.id, event.target.value), "Attach paint as raster mask")}><option value="">{t("noSelection")}</option>{document.layers.filter((layer) => layer.id !== selected.id && !layer.rasterMaskId && layer.parentId === selected.parentId && layer.width === selected.width && layer.height === selected.height && ["raster", "paint", "annotation", "group"].includes(layer.type)).map((layer) => <option key={layer.id} value={layer.id}>{layer.name}</option>)}</select></label></div>}
             {tool === "text" && <AnnotationProperties element={{ ...textTemplate, fill: paintColor }} locale={locale} template
               onChange={(element) => { if (element.kind === "text") { setTextTemplate(element); setPaintColor(element.fill); } }} />}
             {tool === "shape" && <AnnotationProperties element={{ ...shapeTemplate, stroke: paintColor }} locale={locale} template
               onChange={(element) => { if (element.kind === "rect") { setShapeTemplate(element); setPaintColor(element.stroke); } }} />}
+            {selected&&["raster","paint","annotation"].includes(selected.type)&&<fieldset disabled={!selectedEditable}><button onClick={()=>setPathEditing({layerId:selected.id,mask:true,initial:selected.vectorMask?.path})}>{selected.vectorMask?pathCopy[locale].editMask:pathCopy[locale].mask}</button>
+              {selected.vectorMask&&<><button onClick={()=>commit(current=>patchLayer(current,selected.id,{vectorMask:{...selected.vectorMask!,inverted:!selected.vectorMask!.inverted}}),"Invert vector mask")}>{pathCopy[locale].invert}</button><button onClick={()=>commit(current=>patchLayer(current,selected.id,{vectorMask:undefined}),"Remove vector mask")}>{pathCopy[locale].remove}</button></>}
+              {selectedElement?.kind==="path"&&<button onClick={()=>setPathEditing({layerId:selected.id,mask:false,initial:selectedElement})}>{pathCopy[locale].edit}</button>}
+            </fieldset>}
             {tool !== "text" && tool !== "shape" && selected?.type === "annotation" && selectedElement && <>
               {selected.elements.length > 1 && <label className="annotation-object-picker">{propertyLabels.element}<select value={selectedElement.id}
                 onChange={(event) => setSelectedElementId(event.target.value)}>{selected.elements.map((element, index) =>

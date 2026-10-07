@@ -1,3 +1,5 @@
+import { tracePath } from "./vectorPath";
+import { renderLayerFilters } from "./layerFilters";
 import { drawLayerEffects } from "./layerEffects";
 import { canvasBlendMode, rasterSourceUrl, type DrawingLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer } from "./document";
 import { applyRasterMask } from "./rasterMaskRenderer";
@@ -128,7 +130,7 @@ export function previewScale(document: ImageStudioDocument): number {
   const pixels = document.canvas.width * document.canvas.height;
   const largest = Math.max(pixels, ...document.layers.map((layer) => layer.width * layer.height));
   // Root, group recursion, mask, scratch and old displayed preview remain bounded together.
-  const bytes = 4 * (pixels * (maximumGroupDepth(document.layers) + 5) + largest * 4);
+  const bytes = 4 * (pixels * (maximumGroupDepth(document.layers) + 5) + largest * (document.layers.some(layer=>layer.filters?.length)?20:4));
   return Math.min(1, Math.sqrt(PREVIEW_MAX_PIXELS / pixels), Math.sqrt(PREVIEW_MEMORY_BYTES / bytes));
 }
 
@@ -248,6 +250,7 @@ async function renderSingleLayer(
   let ownedBitmap: ImageBitmap | undefined;
   let scratch: HTMLCanvasElement | undefined;
   let masked: HTMLCanvasElement | undefined;
+  let filtered: HTMLCanvasElement | undefined;
   let releaseImage = () => {};
   try {
     if (layer.type === "raster") {
@@ -273,13 +276,21 @@ async function renderSingleLayer(
       image = scratch;
     }
     await yieldRenderTask(dependencies.signal);
-    if (rasterMask) {
+    if (layer.filters?.some(filter=>filter.enabled&&filter.opacity>0)) {
+      filtered=await renderLayerFilters(image,layer.width,layer.height,layer.filters,createCanvas,scale,dependencies.signal,dependencies.memoryBudget);
+      image=filtered;
+    }
+    if (rasterMask || layer.vectorMask) {
       masked = createCanvas(layer.width, layer.height);
       const maskedContext = masked.getContext("2d");
       if (!maskedContext) throw new Error("Canvas export is unavailable");
       maskedContext.scale(scale, scale);
       maskedContext.drawImage(image, 0, 0, layer.width, layer.height);
-      await applyRasterMask(masked, rasterMask.layer, createCanvas, scale, rasterMask.inverted, rasterMask.featherPx, dependencies);
+      if(layer.vectorMask) {
+        maskedContext.globalCompositeOperation=layer.vectorMask.inverted?"destination-out":"destination-in";
+        tracePath(maskedContext,layer.vectorMask.path);maskedContext.fillStyle="#fff";maskedContext.fill();maskedContext.globalCompositeOperation="source-over";
+      }
+      if(rasterMask)await applyRasterMask(masked, rasterMask.layer, createCanvas, scale, rasterMask.inverted, rasterMask.featherPx, dependencies);
       image = masked;
     }
     context.save(); applyLayerComposition(context, layer);
@@ -291,6 +302,7 @@ async function renderSingleLayer(
     releaseImage();
     if (scratch) releaseRenderCanvas(scratch);
     if (masked) releaseRenderCanvas(masked);
+    if (filtered) releaseRenderCanvas(filtered);
   }
 }
 

@@ -39,7 +39,7 @@ export async function exportOpenRaster(document: ImageStudioDocument, dependenci
       const untransformedGroup = layer.type === "group" && Object.entries(defaultTransform()).every(([key,value]) => layer.transform[key as keyof typeof layer.transform] === value);
       if (untransformedGroup) elements.push(`<stack ${layerAttributes(layer)} isolation="isolate">${await writeStack(layer.id)}</stack>`);
       else {
-        const plainRaster = layer.type === "raster" && !layer.effects && layer.transform.scaleX === 1 && layer.transform.scaleY === 1
+        const plainRaster = layer.type === "raster" && !layer.effects && !layer.filters?.length && !layer.vectorMask && layer.transform.scaleX === 1 && layer.transform.scaleY === 1
           && layer.transform.rotation === 0 && Number.isInteger(layer.transform.x) && Number.isInteger(layer.transform.y);
         const size = plainRaster ? {width:layer.width,height:layer.height} : document.canvas;
         rasterPixels += size.width * size.height;

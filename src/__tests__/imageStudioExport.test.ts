@@ -79,6 +79,7 @@ describe("Image Studio export", () => {
       save() {}, restore() {}, scale() {}, translate() {}, rotate() {}, drawImage() {},
       beginPath() { calls.push("beginPath"); }, closePath() {}, moveTo() {}, lineTo() {},
       rect() {}, ellipse() { calls.push("ellipse"); }, stroke() { calls.push("stroke"); }, fill() { calls.push("fill"); },
+      measureText(text:string) { return {width:text.length*8}; },
       fillText(text: string) { calls.push(`fillText:${text}`); }, roundRect: undefined,
     };
     const createCanvas = (width: number, height: number) => ({

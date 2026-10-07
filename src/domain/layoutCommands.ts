@@ -33,14 +33,22 @@ export function alignLayers(document: ImageStudioDocument, ids: readonly string[
     }
     return result;
 }
-export function snapLayer(document: ImageStudioDocument, layerId: string, transform: LayerTransform, tolerance: number): LayerTransform {
+export function snapLayer(document: ImageStudioDocument, layerId: string, transform: LayerTransform, tolerance: number, gridSpacing?: number): LayerTransform {
     const layer = document.layers.find(l => l.id === layerId);
     if (!layer || layer.parentId)
         return transform;
     const b = layerBounds(layer, transform);
     const nearest = (values: number[]) => values.reduce((best, n) => Math.abs(n) < Math.abs(best) ? n : best, Infinity);
-    const dx = nearest([-b.left, document.canvas.width - b.right, document.canvas.width / 2 - (b.left + b.right) / 2]);
-    const dy = nearest([-b.top, document.canvas.height - b.bottom, document.canvas.height / 2 - (b.top + b.bottom) / 2]);
+    const targetsX = [0, document.canvas.width/2, document.canvas.width], targetsY = [0, document.canvas.height/2, document.canvas.height];
+    for(const guide of document.guides??[]) (guide.axis==="x"?targetsX:targetsY).push(guide.position);
+    for(const other of document.layers) {
+      if(other.id===layerId||other.parentId||!other.visible||other.type==="mask"||other.type==="adjustment")continue;
+      const bounds=layerBounds(other);targetsX.push(bounds.left,bounds.right,(bounds.left+bounds.right)/2);targetsY.push(bounds.top,bounds.bottom,(bounds.top+bounds.bottom)/2);
+    }
+    const anchorsX=[b.left,b.right,(b.left+b.right)/2],anchorsY=[b.top,b.bottom,(b.top+b.bottom)/2];
+    const gridTargets=(anchors:number[])=>gridSpacing&&gridSpacing>=1?anchors.map(value=>Math.round(value/gridSpacing)*gridSpacing):[];
+    const dx=nearest([...targetsX,...gridTargets(anchorsX)].flatMap(target=>anchorsX.map(anchor=>target-anchor)));
+    const dy=nearest([...targetsY,...gridTargets(anchorsY)].flatMap(target=>anchorsY.map(anchor=>target-anchor)));
     return { ...transform, x: transform.x + (Math.abs(dx) <= tolerance ? dx : 0), y: transform.y + (Math.abs(dy) <= tolerance ? dy : 0) };
 }
 export function cropCanvas(document: ImageStudioDocument, rect: {
@@ -53,5 +61,5 @@ export function cropCanvas(document: ImageStudioDocument, rect: {
         return document;
     if (!rect.x && !rect.y && rect.width === document.canvas.width && rect.height === document.canvas.height)
         return document;
-    return touchDocument({ ...document, canvas: { width: rect.width, height: rect.height }, selection: { layerId: document.selection.layerId }, layers: document.layers.map(l => l.parentId ? l : { ...l, transform: { ...l.transform, x: l.transform.x - rect.x, y: l.transform.y - rect.y } }) });
+    return touchDocument({ ...document, ...(document.guides?{guides:document.guides.map(guide=>({...guide,position:guide.position-(guide.axis==="x"?rect.x:rect.y)}))}:{}), canvas: { width: rect.width, height: rect.height }, selection: { layerId: document.selection.layerId }, layers: document.layers.map(l => l.parentId ? l : { ...l, transform: { ...l.transform, x: l.transform.x - rect.x, y: l.transform.y - rect.y } }) });
 }
