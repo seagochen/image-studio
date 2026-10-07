@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { screenToStage, type Viewport } from "../shared/canvas";
 
-export const MIN_ZOOM = 0.05;
+export const MIN_ZOOM = 0.01;
 export const MAX_ZOOM = 16;
 
 export interface CanvasSize { width: number; height: number; }
@@ -17,6 +17,12 @@ export interface UseCanvasViewportResult {
 
 export function recenterViewport(viewport: Viewport, before: CanvasSize, after: CanvasSize): Viewport {
   return {...viewport, offsetX: viewport.offsetX + (after.width-before.width)/2, offsetY: viewport.offsetY + (after.height-before.height)/2};
+}
+
+export function fitCanvasViewport(viewport: Viewport, surface: CanvasSize, canvas: CanvasSize): Viewport {
+  const padding = Math.min(surface.width < 500 ? 20 : 64, Math.max(0, (Math.min(surface.width, surface.height) - 1) / 4));
+  const scale = Math.max(MIN_ZOOM, Math.min((surface.width - padding * 2) / canvas.width, (surface.height - padding * 2) / canvas.height, 1));
+  return { ...viewport, scale, offsetX: (surface.width - canvas.width * scale) / 2, offsetY: (surface.height - canvas.height * scale) / 2 };
 }
 
 /** Zoom/pan/fit state and the surface-size ResizeObserver, extracted from Studio.tsx (Issue #163). */
@@ -44,19 +50,15 @@ export function useCanvasViewport(surfaceRef: RefObject<HTMLDivElement>, canvasS
   }, [surfaceRef]);
 
   const fitView = useCallback((target: CanvasSize = canvasSize) => {
-    const padding = surfaceSize.width < 500 ? 20 : 64;
-    const scale = Math.min(
-      (surfaceSize.width - padding * 2) / target.width,
-      (surfaceSize.height - padding * 2) / target.height,
-      1,
-    );
-    const safeScale = Math.max(MIN_ZOOM, scale);
-    setViewport((current) => ({
-      ...current, scale: safeScale,
-      offsetX: (surfaceSize.width - target.width * safeScale) / 2,
-      offsetY: (surfaceSize.height - target.height * safeScale) / 2,
-    }));
+    setViewport((current) => fitCanvasViewport(current, surfaceSize, target));
   }, [canvasSize, surfaceSize]);
+
+  const previousCanvasSize = useRef(canvasSize);
+  useEffect(() => {
+    const previous = previousCanvasSize.current;
+    previousCanvasSize.current = canvasSize;
+    if (previous.width !== canvasSize.width || previous.height !== canvasSize.height) fitView();
+  }, [canvasSize.width, canvasSize.height, fitView]);
 
   const zoomAt = useCallback((factor: number, anchor?: { x: number; y: number }) => {
     setViewport((current) => {

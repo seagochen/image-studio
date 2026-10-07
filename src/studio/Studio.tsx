@@ -1,3 +1,4 @@
+import { applyAiResult } from "../domain/applyAiResult";
 import { CanvasPathEditor, pathCopy } from "./CanvasPathEditor";
 import { LayerFiltersPanel } from "./LayerFiltersPanel";
 import { CanvasGuides } from "./CanvasGuides";
@@ -927,10 +928,11 @@ export function Studio(): JSX.Element {
         onApply={(image, baseRevision) => {
           if (projectRevisionRef.current !== baseRevision) throw new Error("Project revision changed before result application");
           setRecoverableOperation(null);
-          const resultLayer = rasterLayerFromImage(image);
-          setDocument((current) => historyRef.current.execute(current, addLayer(current, resultLayer), "Apply AI result"));
+          const outcome = applyAiResult(documentRef.current, image, selected.id);
+          setDocument((current) => historyRef.current.execute(current, outcome.document, "Apply AI result"));
+          setPixelSelection(null);
           refreshHistory((value) => value + 1);
-          return resultLayer.id;
+          return outcome.resultLayerId;
         }} />}
       {apiKeyOpen && <ApiKeySettingsDialog copy={fileCopy[locale]} onClose={() => setApiKeyOpen(false)} />}
       {settingsOpen && <ShortcutSettingsDialog bindings={shortcutBindings} copy={fileCopy[locale]}
