@@ -1,3 +1,4 @@
+import { isAiEditorMode } from "./editorProfiles";
 import type { AiOperation, AiRunGateway, AiRunStatus } from "./types";
 
 /**
@@ -10,6 +11,7 @@ export const STANDALONE_MODE_MANIFEST_URL = "/local-ai/mode-manifest";
 
 export class StandaloneAiRunGateway implements AiRunGateway {
   async submit(operation: AiOperation, input: Blob, signal: AbortSignal, secondary?: { field: string; file: Blob }): Promise<string> {
+    if (!isAiEditorMode(operation.mode)) throw new Error("This AI mode is not available in Image Studio");
     const form = new FormData();
     form.append("operation", JSON.stringify({
       id: operation.id, baseRevision: operation.baseRevision, mode: operation.mode, inputLayerId: operation.inputLayerId,

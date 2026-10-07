@@ -926,7 +926,6 @@ export function Studio(): JSX.Element {
         currentRevision={() => projectRevisionRef.current} onClose={() => setAiOpen(false)} t={t}
         onApply={(image, baseRevision) => {
           if (projectRevisionRef.current !== baseRevision) throw new Error("Project revision changed before result application");
-          setAiOpen(false);
           setRecoverableOperation(null);
           const resultLayer = rasterLayerFromImage(image);
           setDocument((current) => historyRef.current.execute(current, addLayer(current, resultLayer), "Apply AI result"));

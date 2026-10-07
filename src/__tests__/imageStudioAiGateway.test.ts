@@ -29,10 +29,10 @@ describe("Image Studio AI HTTP gateway", () => {
 
   it("hides the output format field because Image Studio always requests PNG", async () => {
     jest.spyOn(globalThis, "fetch").mockResolvedValue(json({
-      modes: { denoise: { enabled: true, input: "upload", mediaKind: "image", resultKind: "image", label: "Denoise", fields: ["strength", "output_format"] } },
+      modes: { deblur: { enabled: true, input: "upload", mediaKind: "image", resultKind: "image", label: "Denoise", fields: ["strength", "output_format"] } },
       fields: { strength: { label: "Strength", options: ["low", "medium"] }, output_format: { label: "Output format", options: ["jpg", "png"] } },
     }));
-    await expect(fetchImageModes("en")).resolves.toEqual([{ id: "denoise", label: "Denoise", fields: [{
+    await expect(fetchImageModes("en")).resolves.toEqual([{ id: "deblur", label: "Denoise", fields: [{
       id: "strength", label: "Strength", options: ["low", "medium"], type: undefined,
       optionLabels: undefined, default: undefined, placeholder: undefined,
     }] }]);
@@ -56,21 +56,33 @@ describe("Image Studio AI HTTP gateway", () => {
     expect(form.append).toHaveBeenCalledWith("mask_file", expect.any(Blob), "mask.png");
   });
 
-  it("preserves localized selectors and prompt fields for outpainting", async () => {
-    jest.spyOn(globalThis, "fetch").mockResolvedValue(json({
-      modes: { outpaint: { enabled: true, input: "upload", mediaKind: "image", resultKind: "image", label: "智能扩图", fields: ["aspect_ratio", "orientation", "outpaint_prompt", "output_format"] } },
-      fields: {
-        aspect_ratio: { label: "画布比例", type: "select", options: ["16:9", "4:3"], optionLabels: { "16:9": "16:9", "4:3": "4:3" }, default: "16:9" },
-        orientation: { label: "方向", type: "select", options: ["landscape", "portrait"], optionLabels: { landscape: "横向", portrait: "纵向" }, default: "landscape" },
-        outpaint_prompt: { label: "扩图提示", type: "textarea", placeholder: "选填" },
-        output_format: { label: "输出格式", options: ["png"] },
-      },
-    }));
-    await expect(fetchImageModes("zh-CN")).resolves.toEqual([{ id: "outpaint", label: "智能扩图", fields: [
-      { id: "aspect_ratio", label: "画布比例", type: "select", options: ["16:9", "4:3"], optionLabels: { "16:9": "16:9", "4:3": "4:3" }, default: "16:9", placeholder: undefined },
-      { id: "orientation", label: "方向", type: "select", options: ["landscape", "portrait"], optionLabels: { landscape: "横向", portrait: "纵向" }, default: "landscape", placeholder: undefined },
-      { id: "outpaint_prompt", label: "扩图提示", type: "textarea", options: undefined, optionLabels: undefined, default: undefined, placeholder: "选填" },
-    ] }]);
+  it("excludes every unrelated platform tool even when its output is an image", async () => {
+    const enabled = { enabled: true, input: "upload", mediaKind: "image", resultKind: "image", fields: [] };
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(json({ modes: Object.fromEntries([
+      "outpaint", "document_restore", "document_unwarp", "watermark_embed", "watermark_extract", "watermark_remove",
+      "face_restore", "object_segment", "light_enhance", "virtual_try_on", "future_image_tool",
+    ].map((id) => [id, enabled])) }));
+    await expect(fetchImageModes("zh-CN")).resolves.toEqual([]);
+  });
+
+  it("keeps unavailable old-photo restoration distinct from face restoration", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(json({ modes: {
+      face_restore: { enabled: true, fields: [] },
+      old_photo_restore: { enabled: false, fields: ["restoration_scale"] },
+      colorize: { enabled: true, fields: ["input_size"] },
+    }, fields: { restoration_scale: { default: 1, options: [1, 2] }, input_size: { default: 512, options: [256, 512] } } }));
+    const modes = await fetchImageModes("en");
+    expect(modes.map((mode) => mode.id)).toEqual(["old_photo_restore", "colorize"]);
+    expect(modes[0].enabled).toBe(false);
+    expect(modes[0].fields[0]).toMatchObject({ default: "1", options: ["1", "2"] });
+    expect(modes[1].fields[0]).toMatchObject({ default: "512", options: ["256", "512"] });
+  });
+
+  it("rejects submitting an excluded tool without creating an operation", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch");
+    await expect(new HttpAiRunGateway().submit({ ...operation, mode: "watermark_embed" }, new Blob(), new AbortController().signal))
+      .rejects.toThrow("not available in Image Studio");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reuses the persisted run and does not submit it again", async () => {

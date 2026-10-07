@@ -22,7 +22,7 @@ export async function maskInputFromSelection(selection: PixelSelectionMask): Pro
 }
 
 export async function maskInputFromLayer(
-  layer: DrawingLayer, options: { inverted?: boolean; featherPx?: number } = {}, selection?: PixelSelectionMask | null,
+  layer: DrawingLayer, options: { inverted?: boolean; featherPx?: number; onCoverage?: (nonEmpty: boolean) => void } = {}, selection?: PixelSelectionMask | null,
 ): Promise<Blob> {
   const coverage = coverageFromDrawingMask(layer, options.inverted === true, options.featherPx ?? 0, createCanvas);
   const canvas = createCanvas(layer.width, layer.height);
@@ -38,6 +38,7 @@ export async function maskInputFromLayer(
     if (selection) {
       intersectOpaqueMaskData(image.data, canvas.width, canvas.height, selection);
     }
+    options.onCoverage?.(coverage.some((value, index) => value > 0 && (!selection || selection.pixels[index] > 0)));
     context.putImageData(image, 0, 0);
     return await canvasBlob(canvas);
   }

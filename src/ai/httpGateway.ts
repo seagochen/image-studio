@@ -1,20 +1,24 @@
+import { AI_EDITOR_FIELDS, AI_EDITOR_MODE_IDS, isAiEditorMode } from "./editorProfiles";
 import type { AiRunGateway, AiRunStatus } from "./types";
 import { appSessionHeaders } from "../shared/auth";
 
 export interface ImageMode {
   id: string;
   label: string;
+  enabled?: boolean;
   /** A manifest-declared image mask input. Image Studio never invents this capability. */
   maskField?: string;
   maskRequired?: boolean;
   fields: Array<{
     id: string;
     label: string;
-    type?: "text" | "textarea" | "select";
+    type?: "text" | "textarea" | "select" | "number";
     options?: string[];
     optionLabels?: Record<string, string>;
     default?: string;
     placeholder?: string;
+    minimum?: number;
+    maximum?: number;
   }>;
 }
 
@@ -29,19 +33,23 @@ export async function fetchImageModes(language: string, signal?: AbortSignal, ma
     throw new Error(typeof failure.detail === "string" ? failure.detail : `Mode manifest request failed: ${response.status}`);
   }
   const manifest = await response.json() as { modes?: Record<string, any>; fields?: Record<string, any> };
-  return Object.entries(manifest.modes ?? {}).flatMap(([id, mode]) => {
+  return AI_EDITOR_MODE_IDS.flatMap((id) => {
+    const mode = manifest.modes?.[id];
+    if (!mode) return [];
     const maskField = mode.secondary?.field === "mask_file" && mode.secondary?.mediaKind === "image" ? "mask_file" : undefined;
-    if (!mode.enabled || (mode.input && mode.input !== "upload") || (mode.mediaKind && mode.mediaKind !== "image") || (mode.resultKind && mode.resultKind !== "image") || (mode.secondary && !maskField)) return [];
-    return [{ id, label: String(mode.label || id), ...(maskField ? { maskField, maskRequired: mode.secondary.required === true } : {}), fields: (mode.fields ?? []).filter((fieldId: string) => fieldId !== "output_format").map((fieldId: string) => {
-      const field = mode.fieldOverrides?.[fieldId] ?? manifest.fields?.[fieldId] ?? {};
+    if ((mode.input && mode.input !== "upload") || (mode.mediaKind && mode.mediaKind !== "image") || (mode.resultKind && mode.resultKind !== "image") || (mode.secondary && !maskField)) return [];
+    return [{ id, label: String(mode.label || id), ...(mode.enabled ? {} : { enabled: false }), ...(maskField ? { maskField, maskRequired: mode.secondary.required === true } : {}), fields: (mode.fields ?? []).filter((fieldId: string) => AI_EDITOR_FIELDS[id].includes(fieldId)).map((fieldId: string) => {
+      const field = { ...manifest.fields?.[fieldId], ...mode.fieldOverrides?.[fieldId] };
       return {
         id: fieldId,
         label: String(field.label || fieldId),
         type: field.type,
-        options: field.options,
+        options: field.type === "number" ? undefined : field.options?.map(String),
         optionLabels: field.optionLabels,
-        default: field.default,
+        default: field.default === undefined ? undefined : String(field.default),
         placeholder: field.placeholder,
+        ...(typeof field.minimum === "number" ? { minimum: field.minimum } : {}),
+        ...(typeof field.maximum === "number" ? { maximum: field.maximum } : {}),
       };
     }) }];
   });
@@ -52,6 +60,7 @@ export class HttpAiRunGateway implements AiRunGateway {
     operation: import("./types").AiOperation, input: Blob, signal: AbortSignal,
     secondary?: { field: string; file: Blob },
   ): Promise<string> {
+    if (!isAiEditorMode(operation.mode)) throw new Error("This AI mode is not available in Image Studio");
     const preparedResponse = await fetch(`/image-studio/projects/${encodeURIComponent(operation.projectId)}/operations`, {
       method: "POST", headers: { "Content-Type": "application/json" }, signal,
       body: JSON.stringify({

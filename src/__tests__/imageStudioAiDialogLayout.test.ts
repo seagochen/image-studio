@@ -12,6 +12,8 @@ describe("Image Studio AI editor layout", () => {
 
     expect(dialog).toContain('className="pixel-editor ai-editor"');
     expect(dialog.indexOf("<nav>")).toBeGreaterThan(-1);
+    expect(dialog).toContain("<AiPreview");
+    expect(dialog).toContain("<AiMaskEditor");
     expect(mainStart).toBeGreaterThan(-1);
     expect(parameterPanel).toBeGreaterThan(mainStart);
     expect(parameterPanel).toBeLessThan(mainEnd);

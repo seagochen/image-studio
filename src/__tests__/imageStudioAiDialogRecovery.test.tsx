@@ -1,5 +1,6 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { fetchImageModes } from "../ai/httpGateway";
 import { AiEditDialog } from "../ai/AiEditDialog";
 import type { AiOperation } from "../ai/types";
 import { rasterLayerFromImage } from "../domain/importImage";
@@ -12,6 +13,8 @@ jest.mock("../ai/httpGateway", () => ({
     result: (_runId: string, signal: AbortSignal) => (globalThis as any).__imageStudioAiResult(signal),
   })),
 }));
+
+jest.mock("../ai/AiMaskEditor", () => ({ AiMaskEditor: () => null }));
 
 describe("Image Studio AI result recovery dialog", () => {
   let host: HTMLDivElement;
@@ -34,12 +37,12 @@ describe("Image Studio AI result recovery dialog", () => {
     setRuntimeConfigForTests(null);
   });
 
-  const renderRecoverable = async () => {
+  const renderRecoverable = async (mode = "denoise") => {
     const layer = rasterLayerFromImage({
       dataUrl: "data:image/png;base64,AA==", mimeType: "image/png", width: 10, height: 10, name: "Raster",
     });
     const operation: AiOperation = {
-      id: "operation-1", projectId: "project-1", baseRevision: 1, mode: "denoise", inputLayerId: layer.id,
+      id: "operation-1", projectId: "project-1", baseRevision: 1, mode, inputLayerId: layer.id,
       maskLayerId: null, parameters: {}, baseDocumentRevision: "revision-1", runId: "run-1",
       status: "result-ready", resultLayerId: null, error: null, retryOf: null, recipeId: null, stepIndex: null,
     };
@@ -50,6 +53,12 @@ describe("Image Studio AI result recovery dialog", () => {
         onApply={() => "result-layer"} onClose={() => undefined} t={(key) => key} />);
     });
   };
+
+  it("resumes a submitted masked run without requiring the transient selection again", async () => {
+    jest.mocked(fetchImageModes).mockResolvedValueOnce([{ id: "object_remove", label: "Local repair", fields: [], maskField: "mask_file", maskRequired: true }]);
+    await renderRecoverable("object_remove");
+    expect([...host.querySelectorAll("button")].find((button) => button.textContent === "resume")?.disabled).toBe(false);
+  });
 
   it("offers recovery without pretending that a persisted result is currently running", async () => {
     await renderRecoverable();

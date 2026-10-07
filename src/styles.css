@@ -551,3 +551,43 @@ button.primary .product-icon { --product-icon-color: var(--on-accent); --product
 .guide-y {border-top:0;}
 .guide-x::after {content:"";position:absolute;left:4px;top:0;bottom:0;border-left:1px solid #0891b2;}
 .guide-y::after {content:"";position:absolute;top:4px;left:0;right:0;border-top:1px solid #0891b2;}
+
+/* AI editing shares the light workbench but gives every task its own workspace. */
+.ai-editor { width: min(1320px, 96vw); }
+.ai-editor { grid-template-columns: 152px minmax(0, 1fr); }
+.ai-editor > nav { width: auto; }
+.ai-workspace { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px; background: #f7f8fc; overflow: auto; }
+.ai-workspace-heading h3 { margin: 0 0 6px; font-size: 16px; }
+.ai-workspace-heading p, .ai-preview-dimensions { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.ai-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.ai-preview-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.ai-preview-toolbar button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent); }
+.ai-preview-toolbar label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.ai-preview-toolbar input[type="range"] { width: 100px; }
+.ai-preview-scroll { flex: 1; min-height: 240px; overflow: auto; padding: 20px; background-color: #eef0f5; background-image: repeating-conic-gradient(#e2e5ed 0% 25%,transparent 0% 50%); background-size: 20px 20px; }
+.ai-preview-background-light { background: #fff; }
+.ai-preview-background-dark { background: #303744; }
+.ai-preview-image { position: relative; margin: auto; flex-shrink: 0; }
+.ai-preview-image > img { display: block; width: 100%; height: 100%; }
+.ai-preview-image.ai-preview-fit { width: min(100%, 600px); }
+.ai-preview-image > .ai-preview-original { position: absolute; inset: 0; }
+.ai-preview-divider { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 0 1px #6366f1; }
+.ai-comparison-slider { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.ai-comparison-slider input { flex: 1; }
+.ai-output-size { padding: 12px; background: var(--accent-soft); border-radius: 8px; font-size: 13px; }
+.ai-mask-editor { display: grid; gap: 12px; min-height: 0; }
+.ai-mask-surface { position: relative; width: min(100%, 640px); margin: auto; }
+.ai-mask-surface img, .ai-mask-surface canvas { display: block; width: 100%; height: 100%; }
+.ai-mask-surface canvas { position: absolute; inset: 0; opacity: .5; cursor: crosshair; touch-action: none; }
+.ai-editor .ai-status { margin: 0; font-size: 12px; }
+@media (max-width: 850px) {
+  .ai-editor > main { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .ai-editor > main > aside { border-left: 0; border-top: 1px solid var(--border); overflow: visible; }
+  .ai-editor > nav { width: auto; }
+  .ai-workspace { overflow: visible; }
+}
+
+.ai-large-mask-source { display: block; max-width: 100%; max-height: 500px; margin: auto; }
+
+.ai-mask-scroll { overflow: auto; max-height: 560px; min-height: 0; }
+.ai-mask-surface.ai-mask-detail { max-width: none; }
