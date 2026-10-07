@@ -27,7 +27,7 @@ export function LayerInteractions({ layers, parentId = null, selectable, blocked
       if (event.target !== event.currentTarget) return;
       event.cancelBubble = true;
       const node = event.currentTarget;
-      onTransform(layer.id, { x: node.x(), y: node.y(), scaleX: node.scaleX(), scaleY: node.scaleY(), rotation: node.rotation() }, `transform:${layer.id}`);
+      onTransform(layer.id, { x: node.x(), y: node.y(), scaleX: node.scaleX(), scaleY: node.scaleY(), rotation: node.rotation() }, `${event.type.startsWith("drag") ? "drag" : "transform"}:${layer.id}`);
     };
     if (layer.type === "annotation") return <AnnotationNode key={layer.id} layer={layer} hitOnly selectable={enabled} transformable={transformable}
       onSelect={(elementId) => onSelect(layer.id, elementId)} onEdit={(elementId) => onEdit?.(layer.id, elementId)}

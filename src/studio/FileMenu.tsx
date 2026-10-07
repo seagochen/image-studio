@@ -2,12 +2,18 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import type { FileCopy } from "./fileCopy";
 import type { ProjectSummary } from "../projects/projectClient";
 import { ProductIcon, type ProductIconName } from "./ProductIcon";
+import { invokeEditorCommand, type EditorCommand } from "../domain/editorCommands";
 
 export type DeliveryFormat = "png" | "jpeg" | "webp" | "ora";
-type MenuName = "file" | "edit" | "view" | "settings";
+type CommandMenuName = "layer" | "selection" | "adjustments" | "filters";
+type MenuName = "file" | "edit" | "view" | "settings" | CommandMenuName;
+function isCommandMenu(menu: MenuName): menu is CommandMenuName {
+  return menu === "layer" || menu === "selection" || menu === "adjustments" || menu === "filters";
+}
 type SubmenuName = "projects" | "import" | "export";
 
 interface Props {
+  commandGroups?: Partial<Record<CommandMenuName, { label: string; commands: readonly EditorCommand[] }>>;
   title: string;
   copy: FileCopy;
   projects: ProjectSummary[];
@@ -48,10 +54,11 @@ interface Props {
   onToggleNavigator: () => void;
 }
 
-const MENUS: MenuName[] = ["file", "edit", "view", "settings"];
+const MENUS: MenuName[] = ["file", "edit", "layer", "selection", "adjustments", "filters", "view", "settings"];
 
 export function FileMenu(props: Props): JSX.Element {
   const { title, copy: t, projects, busy } = props;
+  const menus = MENUS.filter((menu) => !isCommandMenu(menu) || props.commandGroups?.[menu]);
   const [name, setName] = useState(title);
   const [renaming, setRenaming] = useState(false);
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
@@ -95,7 +102,7 @@ export function FileMenu(props: Props): JSX.Element {
     if (focusFirst) requestAnimationFrame(() => firstEnabled(menu)?.focus());
   };
   const moveTopLevel = (current: MenuName, delta: number, keepOpen: boolean) => {
-    const next = MENUS[(MENUS.indexOf(current) + delta + MENUS.length) % MENUS.length];
+    const next = menus[(menus.indexOf(current) + delta + menus.length) % menus.length];
     if (keepOpen) open(next, true); else triggers.current[next]?.focus();
   };
   const triggerKey = (event: ReactKeyboardEvent, menu: MenuName) => {
@@ -128,7 +135,7 @@ export function FileMenu(props: Props): JSX.Element {
   const submenu = (name: SubmenuName, icon: ProductIconName, label: string, children: ReactNode, disabled = false) =>
     <div className="studio-menu-submenu" onMouseEnter={() => !disabled && setOpenSubmenu(name)}>
       <button type="button" role="menuitem" className="studio-menu-row" disabled={disabled} aria-haspopup="menu" aria-expanded={openSubmenu === name}
-        onClick={() => setOpenSubmenu((current) => current === name ? null : name)}
+        onClick={() => setOpenSubmenu(name)}
         onKeyDown={(event) => { if (event.key === "ArrowRight" && !disabled) { event.preventDefault(); setOpenSubmenu(name); requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>(`.studio-menu-submenu-panel[data-submenu="${name}"] [role="menuitem"]:not(:disabled)`)?.focus()); } }}>
         <span className="menu-icon" aria-hidden="true"><ProductIcon name={icon} /></span><span>{label}</span><span className="menu-arrow" aria-hidden="true"><ProductIcon name="chevron-right" /></span>
       </button>
@@ -137,13 +144,16 @@ export function FileMenu(props: Props): JSX.Element {
 
   return <div ref={root} className="document-controls">
     <div className="studio-menu-bar" role="menubar" aria-label={t.menuBar}>
-      {MENUS.map((menu) => <div className="studio-menu" key={menu} onMouseEnter={() => { if (openMenu && openMenu !== menu) open(menu); }}>
+      {menus.map((menu) => <div className="studio-menu" key={menu} onMouseEnter={() => { if (openMenu && openMenu !== menu) open(menu); }}>
         <button ref={(node) => { if (node) triggers.current[menu] = node; }} type="button" role="menuitem"
           className="studio-menu-trigger" aria-haspopup="menu" aria-expanded={openMenu === menu}
           onClick={() => openMenu === menu ? closeMenus(menu) : open(menu)} onKeyDown={(event) => triggerKey(event, menu)}>
-          {t[menu]}
+          {isCommandMenu(menu) ? props.commandGroups?.[menu]?.label : t[menu]}
         </button>
         {openMenu === menu && <div id={`studio-menu-${menu}`} className="studio-menu-panel" role="menu" onKeyDown={(event) => panelKey(event, menu)}>
+          {isCommandMenu(menu) && props.commandGroups?.[menu]?.commands.map((command) => row(null, command.label,
+            () => invokeEditorCommand(props.commandGroups![menu]!.commands, command.id),
+            { key: command.id, disabled: !command.enabled, shortcut: command.shortcut }))}
           {menu === "file" && <>
             {row("new", t.new, props.onNew, { disabled: busy })}
             {submenu("projects", "folder", t.projects, projects.length

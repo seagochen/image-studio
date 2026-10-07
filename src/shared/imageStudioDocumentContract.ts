@@ -4,7 +4,7 @@ import {
   MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS, MAX_LAYERS,
 } from "./imageStudioDomain";
 
-export const IMAGE_STUDIO_DOCUMENT_VERSION = 12 as const;
+export const IMAGE_STUDIO_DOCUMENT_VERSION = 13 as const;
 export const MAX_SELECTION_MASK_RUNS = 100_000;
 
 export type ImageStudioDocumentContractErrorCode = "invalid" | "future_version" | "embedded_binary";
@@ -166,6 +166,26 @@ function buildLayer(value: unknown, options: NormalizeOptions): Record<string, a
     transform: { x: value.transform.x, y: value.transform.y, scaleX: value.transform.scaleX, scaleY: value.transform.scaleY, rotation: value.transform.rotation },
     parentId: value.parentId ?? null,
   };
+  if (value.effects !== undefined) {
+    if (!["raster", "paint", "annotation"].includes(value.type) || !record(value.effects)) invalid("Invalid Image Studio layer effects");
+    const effects: Record<string, any> = {};
+    for (const kind of ["shadow", "stroke"] as const) {
+      const effect = value.effects[kind];
+      if (effect === undefined) continue;
+      if (!record(effect) || typeof effect.color !== "string" || !/^#[0-9a-f]{6}$/i.test(effect.color)
+        || !finite(effect.opacity) || effect.opacity < 0 || effect.opacity > 1) invalid("Invalid Image Studio layer effect");
+      if (kind === "shadow") {
+        if (!finite(effect.blur) || effect.blur < 0 || effect.blur > 64 || !finite(effect.offsetX) || Math.abs(effect.offsetX) > 256
+          || !finite(effect.offsetY) || Math.abs(effect.offsetY) > 256) invalid("Invalid Image Studio shadow");
+        effects.shadow = {color:effect.color,opacity:effect.opacity,blur:effect.blur,offsetX:effect.offsetX,offsetY:effect.offsetY};
+      } else {
+        if (!finite(effect.width) || effect.width < 0 || effect.width > 16) invalid("Invalid Image Studio stroke");
+        effects.stroke = {color:effect.color,opacity:effect.opacity,width:effect.width};
+      }
+    }
+    if (Object.keys(value.effects).some(key => key !== "shadow" && key !== "stroke")) invalid("Unknown Image Studio layer effect");
+    if (Object.keys(effects).length) base.effects = effects;
+  }
   if (value.rasterMaskId === undefined && (value.rasterMaskInverted !== undefined || value.rasterMaskFeatherPx !== undefined)) {
     invalid("Invalid Image Studio orphan raster mask effect");
   }

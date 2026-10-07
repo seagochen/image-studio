@@ -1,6 +1,6 @@
 # Image Studio
 
-Image Studio 是一个基于浏览器的分层图像编辑器（栅格 / 绘制 / 蒙版 / 标注 / 调整图层、选区、透视、导出，以及可选的 AI 编辑）。
+Image Studio 是一个基于浏览器的分层图像编辑器（栅格 / 绘制 / 蒙版 / 标注 / 调整图层、选区、透视、画布裁剪、图层对齐、可编辑投影/描边、历史跳转、导出预览，以及可选的 AI 编辑）。
 同一份源码、同一个 Docker 镜像支持两种**显式**运行模式（[#1](https://github.com/seagochen/image-studio/issues/1)）：
 
 | 模式 | 用途 | 容器提供的内容 | 身份 / 项目 / AI |
@@ -197,6 +197,7 @@ npm run check:bundle     # 构建后检查 bundle 中没有服务端凭证引用
 ```
 
 路线图与范围取舍见 [docs/ROADMAP.md](docs/ROADMAP.md)（#2）；实体数位笔验收见 [docs/pen-acceptance.md](docs/pen-acceptance.md)（#3）。
+PhotoCraft 布局的浅色工作台、命令搜索、工具选项栏、历史面板和快捷图层变换见 [docs/photocraft-workbench.md](docs/photocraft-workbench.md)。
 
 目录结构：
 

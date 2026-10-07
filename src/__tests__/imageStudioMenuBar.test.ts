@@ -11,7 +11,7 @@ describe("Image Studio desktop menu bar", () => {
     expect(fileCopy.ja).toMatchObject({ file: "ファイル", edit: "編集", view: "表示", settings: "設定" });
     expect(fileCopy["zh-CN"]).toMatchObject({ file: "文件", edit: "编辑", view: "视图", settings: "设置" });
     expect(fileCopy["zh-TW"]).toMatchObject({ file: "檔案", edit: "編輯", view: "檢視", settings: "設定" });
-    expect(menu).toContain('const MENUS: MenuName[] = ["file", "edit", "view", "settings"]');
+    expect(menu).toContain('const MENUS: MenuName[] = ["file", "edit", "layer", "selection", "adjustments", "filters", "view", "settings"]');
     expect(menu).toContain('role="menubar"');
   });
 

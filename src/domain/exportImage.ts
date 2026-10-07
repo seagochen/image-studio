@@ -1,3 +1,4 @@
+import { drawLayerEffects } from "./layerEffects";
 import { canvasBlendMode, rasterSourceUrl, type DrawingLayer, type ImageStudioDocument, type ImageStudioLayer, type RasterLayer } from "./document";
 import { applyRasterMask } from "./rasterMaskRenderer";
 import { renderDrawingLayer, renderAnnotationLayer } from "./layerRasterization";
@@ -127,7 +128,7 @@ export function previewScale(document: ImageStudioDocument): number {
   const pixels = document.canvas.width * document.canvas.height;
   const largest = Math.max(pixels, ...document.layers.map((layer) => layer.width * layer.height));
   // Root, group recursion, mask, scratch and old displayed preview remain bounded together.
-  const bytes = 4 * (pixels * (maximumGroupDepth(document.layers) + 5) + largest * 2);
+  const bytes = 4 * (pixels * (maximumGroupDepth(document.layers) + 5) + largest * 4);
   return Math.min(1, Math.sqrt(PREVIEW_MAX_PIXELS / pixels), Math.sqrt(PREVIEW_MEMORY_BYTES / bytes));
 }
 
@@ -282,6 +283,7 @@ async function renderSingleLayer(
       image = masked;
     }
     context.save(); applyLayerComposition(context, layer);
+    if (layer.effects) drawLayerEffects(context, image, layer.width, layer.height, layer.effects, createCanvas, scale);
     context.drawImage(image, 0, 0, layer.width, layer.height);
     context.restore();
   } finally {

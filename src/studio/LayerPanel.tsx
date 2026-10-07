@@ -1,3 +1,7 @@
+import { layerIsEditable } from "../domain/layerHierarchy";
+import { LayerThumbnail } from "./LayerThumbnail";
+import { alignLayers, type Alignment } from "../domain/layoutCommands";
+import { editingCopy } from "./editingCopy";
 import { useEffect, useMemo, useState } from "react";
 import type { Locale, MessageKey } from "../i18n";
 import {
@@ -45,6 +49,12 @@ export function LayerPanel(props: Props): JSX.Element {
     });
   }, [document.layers]);
 
+  const layoutIds = multiSelectedIds.length ? multiSelectedIds : selected ? [selected.id] : [];
+  const copy = editingCopy[locale];
+  const layoutLayers = document.layers.filter(layer => layoutIds.includes(layer.id));
+  const canAlign = layoutLayers.length > 0 && layoutLayers.every(layer => layerIsEditable(document.layers, layer.id)
+    && layer.type !== "mask" && layer.type !== "adjustment" && (layer.parentId ?? null) === (layoutLayers[0].parentId ?? null))
+    && (layoutLayers.length > 1 || !layoutLayers[0].parentId);
   return <>
     {selected ? <div className="layer-controls">
       <label className="layer-name-field">{t("name")}<input value={selected.name} onChange={(event) => commit((current) => patchLayer(current, selected.id, { name: event.target.value }), "Rename layer", `name:${selected.id}`)} /></label>
@@ -55,6 +65,10 @@ export function LayerPanel(props: Props): JSX.Element {
         onVisibilityChange={() => commit((current) => patchLayer(current, selected.id, { visible: !selected.visible }), "Toggle visibility")}
         onLockChange={() => commit((current) => patchLayer(current, selected.id, { locked: !selected.locked }), "Toggle lock")} /></div>
     </div> : <p className="panel-empty">{t("noSelection")}</p>}
+    <div className="layer-alignment" role="toolbar" aria-label={copy.align}>
+      {(["left", "center", "right", "top", "middle", "bottom", "horizontal", "vertical"] as Alignment[]).map(mode => <button key={mode} disabled={!canAlign || (mode === "horizontal" || mode === "vertical") && layoutIds.length < 3}
+        onClick={() => commit(current => alignLayers(current, layoutIds, mode), `Align layers ${mode}`)}>{copy[mode]}</button>)}
+    </div>
     <div className="layer-list">{displayLayers.map(({ layer, depth }) => {
       const groupedWithSelection = multiSelectedIds.length >= 2 && multiSelectedIds.includes(layer.id);
       const neighbor = groupableNeighbor(document.layers, layer);
@@ -73,7 +87,7 @@ export function LayerPanel(props: Props): JSX.Element {
           if (event.ctrlKey || event.metaKey) { setMultiSelectedIds((current) => { const base = current.length ? current : selected ? [selected.id] : []; return base.includes(layer.id) ? base.filter((id) => id !== layer.id) : [...base, layer.id]; }); props.onSelectLayer(layer.id); return; }
           setMultiSelectedIds([]); props.onSelectLayer(layer.id);
         }} onDoubleClick={() => layer.type === "group" && commit((current) => patchLayer(current, layer.id, { collapsed: !layer.collapsed }), "Toggle group")} style={{ paddingInlineStart: 8 + depth * 16 }}>
-          <span>{layer.type === "group" && <ProductIcon name={layer.collapsed ? "chevron-right" : "chevron-down"} />}</span><span className="layer-name">{layer.name}</span><small>{layer.type}</small>
+          <span>{layer.type === "group" && <ProductIcon name={layer.collapsed ? "chevron-right" : "chevron-down"} />}</span><LayerThumbnail layer={layer} document={document} /><span className="layer-name">{layer.name}<small>{layer.rasterMaskId ? `${copy.mask}: ${document.layers.find(candidate => candidate.id === layer.rasterMaskId)?.name ?? ""}` : layer.type === "mask" ? `${copy.owner}: ${document.layers.find(candidate => candidate.rasterMaskId === layer.id)?.name ?? "—"}` : layer.type}</small></span>
         </button>
         <details className="layer-row-menu"><summary aria-label={LAYER_UI[locale].menu}><ProductIcon name="more" /></summary><div>
           <button onClick={() => { const name = window.prompt(LAYER_UI[locale].rename, layer.name); if (name?.trim()) commit((current) => patchLayer(current, layer.id, { name: name.trim() }), "Rename layer"); }}>{LAYER_UI[locale].rename}</button>

@@ -25,9 +25,9 @@ import {
 import { copySelectedRasterTiles, constrainRgbaToCoverage, editedRasterMimeType, eraseSelectedRasterTiles, liftSelectedRasterTiles, resolveRasterEditCoverage } from "../domain/editCoverage";
 import { applyPixelTileDiffs, PixelTileRecorder, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, TOOL_LABELS, type PixelSelection, type MarqueeDraft, type ShapeTool, type Tool } from "./tools";
+import type { InspectorTab } from "./Inspector";
 
 type PointerKonvaEvent = Konva.KonvaEventObject<PointerEvent | MouseEvent | TouchEvent>;
-type InspectorTab = "properties" | "layers";
 
 export interface UseRasterToolSessionOptions {
   tool: Tool;
@@ -641,12 +641,10 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
   ): Promise<ImageStudioDocument> => {
     const layer = current.layers.find((candidate) => candidate.id === layerId);
     if (!layer || layer.type !== "raster" || layer.locked) throw new Error("Pixel history layer is unavailable");
-    let canvas = directPixelCanvasRef.current;
-    if (!canvas || directPixelLayerIdRef.current !== layerId || canvas.width !== layer.width || canvas.height !== layer.height) {
-      canvas = await rasterCanvas(layer);
-      directPixelCanvasRef.current = canvas;
-      directPixelLayerIdRef.current = layerId;
-    }
+    // A history jump may cross metadata entries that replace the same layer's source.
+    const canvas = await rasterCanvas(layer);
+    directPixelCanvasRef.current = canvas;
+    directPixelLayerIdRef.current = layerId;
     const rollback = new PixelTileRecorder(canvas);
     try {
       for (const diff of diffs) rollback.capture(diff.x, diff.y, diff.width, diff.height);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { screenToStage, type Viewport } from "../shared/canvas";
 
 export const MIN_ZOOM = 0.05;
@@ -15,15 +15,28 @@ export interface UseCanvasViewportResult {
   actualSize: () => void;
 }
 
+export function recenterViewport(viewport: Viewport, before: CanvasSize, after: CanvasSize): Viewport {
+  return {...viewport, offsetX: viewport.offsetX + (after.width-before.width)/2, offsetY: viewport.offsetY + (after.height-before.height)/2};
+}
+
 /** Zoom/pan/fit state and the surface-size ResizeObserver, extracted from Studio.tsx (Issue #163). */
 export function useCanvasViewport(surfaceRef: RefObject<HTMLDivElement>, canvasSize: CanvasSize): UseCanvasViewportResult {
   const [viewport, setViewport] = useState<Viewport>({ offsetX: 48, offsetY: 48, scale: 1, devicePixelRatio: window.devicePixelRatio || 1 });
   const [surfaceSize, setSurfaceSize] = useState<CanvasSize>({ width: 900, height: 620 });
 
+  const measuredSize = useRef<CanvasSize | null>(null);
+
   useEffect(() => {
     const container = surfaceRef.current;
     if (!container) return;
-    const measure = () => setSurfaceSize({ width: Math.max(320, container.clientWidth), height: Math.max(360, container.clientHeight) });
+    const measure = () => {
+      const next = {width: Math.max(1, container.clientWidth), height: Math.max(1, container.clientHeight)};
+      const previous = measuredSize.current;
+      if (previous && previous.width === next.width && previous.height === next.height) return;
+      measuredSize.current = next;
+      if (previous) setViewport(current => recenterViewport(current, previous, next));
+      setSurfaceSize(next);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(container);

@@ -17,7 +17,13 @@ export type { Point } from "../shared/canvas";
 
 export interface LayerTransform extends Transform2D {}
 
+export interface LayerEffects {
+  shadow?: { color: string; opacity: number; blur: number; offsetX: number; offsetY: number };
+  stroke?: { color: string; opacity: number; width: number };
+}
+
 interface LayerBase {
+  effects?: LayerEffects;
   id: string;
   name: string;
   visible: boolean;

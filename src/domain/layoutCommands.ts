@@ -1,0 +1,57 @@
+import { setLayerTransform } from "./commands";
+import { touchDocument, type ImageStudioDocument, type ImageStudioLayer, type LayerTransform } from "./document";
+import { layerIsEditable } from "./layerHierarchy";
+export type Alignment = "left" | "center" | "right" | "top" | "middle" | "bottom" | "horizontal" | "vertical";
+export function layerBounds(layer: ImageStudioLayer, transform = layer.transform) {
+    const angle = transform.rotation * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
+    const points = [[0, 0], [layer.width, 0], [0, layer.height], [layer.width, layer.height]].map(([x, y]) => ({ x: transform.x + x * transform.scaleX * c - y * transform.scaleY * s, y: transform.y + x * transform.scaleX * s + y * transform.scaleY * c }));
+    const left = Math.min(...points.map(p => p.x)), top = Math.min(...points.map(p => p.y));
+    const right = Math.max(...points.map(p => p.x)), bottom = Math.max(...points.map(p => p.y));
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+export function alignLayers(document: ImageStudioDocument, ids: readonly string[], mode: Alignment): ImageStudioDocument {
+    const layers = document.layers.filter(l => ids.includes(l.id) && l.type !== "mask" && l.type !== "adjustment");
+    if (!layers.length || layers.some(l => !layerIsEditable(document.layers, l.id) || (l.parentId ?? null) !== (layers[0].parentId ?? null)))
+        return document;
+    const boxes = layers.map(l => ({ layer: l, box: layerBounds(l) }));
+    const horizontal = ["left", "center", "right", "horizontal"].includes(mode);
+    const start = horizontal ? "left" : "top", end = horizontal ? "right" : "bottom", dimension = horizontal ? "width" : "height";
+    const min = layers.length === 1 && !layers[0].parentId ? 0 : Math.min(...boxes.map(b => b.box[start]));
+    const max = layers.length === 1 && !layers[0].parentId ? (horizontal ? document.canvas.width : document.canvas.height) : Math.max(...boxes.map(b => b.box[end]));
+    const distributed = mode === "horizontal" || mode === "vertical";
+    if (distributed && layers.length < 3)
+        return document;
+    const sorted = [...boxes].sort((a, b) => a.box[start] - b.box[start]);
+    const gap = (max - min - sorted.reduce((sum, b) => sum + b.box[dimension], 0)) / (sorted.length - 1);
+    let cursor = min, result = document;
+    for (const { layer, box } of sorted) {
+        const target = distributed ? cursor : ["left", "top"].includes(mode) ? min : ["right", "bottom"].includes(mode) ? max - box[dimension] : (min + max - box[dimension]) / 2;
+        const delta = target - box[start];
+        if (Math.abs(delta) > 1e-8)
+            result = setLayerTransform(result, layer.id, { ...layer.transform, [horizontal ? "x" : "y"]: layer.transform[horizontal ? "x" : "y"] + delta });
+        cursor += box[dimension] + gap;
+    }
+    return result;
+}
+export function snapLayer(document: ImageStudioDocument, layerId: string, transform: LayerTransform, tolerance: number): LayerTransform {
+    const layer = document.layers.find(l => l.id === layerId);
+    if (!layer || layer.parentId)
+        return transform;
+    const b = layerBounds(layer, transform);
+    const nearest = (values: number[]) => values.reduce((best, n) => Math.abs(n) < Math.abs(best) ? n : best, Infinity);
+    const dx = nearest([-b.left, document.canvas.width - b.right, document.canvas.width / 2 - (b.left + b.right) / 2]);
+    const dy = nearest([-b.top, document.canvas.height - b.bottom, document.canvas.height / 2 - (b.top + b.bottom) / 2]);
+    return { ...transform, x: transform.x + (Math.abs(dx) <= tolerance ? dx : 0), y: transform.y + (Math.abs(dy) <= tolerance ? dy : 0) };
+}
+export function cropCanvas(document: ImageStudioDocument, rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}): ImageStudioDocument {
+    if (!Object.values(rect).every(Number.isInteger) || rect.x < 0 || rect.y < 0 || rect.width < 1 || rect.height < 1 || rect.x + rect.width > document.canvas.width || rect.y + rect.height > document.canvas.height)
+        return document;
+    if (!rect.x && !rect.y && rect.width === document.canvas.width && rect.height === document.canvas.height)
+        return document;
+    return touchDocument({ ...document, canvas: { width: rect.width, height: rect.height }, selection: { layerId: document.selection.layerId }, layers: document.layers.map(l => l.parentId ? l : { ...l, transform: { ...l.transform, x: l.transform.x - rect.x, y: l.transform.y - rect.y } }) });
+}

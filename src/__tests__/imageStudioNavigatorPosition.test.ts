@@ -28,6 +28,6 @@ describe("Image Studio navigator panel position", () => {
     expect(component).toContain("Math.round(viewport.scale * 100)");
     expect(component).toContain("[preview, navWidth, navHeight, collapsed]");
     expect(styles).toContain(".navigator-panel { position: absolute;");
-    expect(styles).toContain("border: 1px solid #cfd5df");
+    expect(styles).toContain("border: 1px solid var(--border)");
   });
 });

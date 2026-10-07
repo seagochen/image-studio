@@ -105,6 +105,18 @@ export class DocumentHistory {
     return entry.after;
   }
 
+  async seek(document: ImageStudioDocument, index: number, resolvePixel: PixelHistoryResolver): Promise<ImageStudioDocument> {
+    if (!Number.isInteger(index) || index < 0 || index > this.undoEntries.length + this.redoEntries.length) throw new Error("Invalid history position");
+    const undo = [...this.undoEntries], redo = [...this.redoEntries];
+    let current = document;
+    try {
+      while (this.undoEntries.length !== index) {
+        current = await (this.undoEntries.length > index ? this.undo(current, resolvePixel) : this.redo(current, resolvePixel));
+      }
+      return current;
+    } catch (error) { this.undoEntries = undo; this.redoEntries = redo; throw error; }
+  }
+
   canRecord(before: ImageStudioDocument, after: ImageStudioDocument): boolean {
     return estimateChangeBytes(before, after) <= this.options.maxBytes;
   }
@@ -134,6 +146,13 @@ export class DocumentHistory {
   clear(): void {
     for (const entry of [...this.undoEntries, ...this.redoEntries]) this.discard(entry);
     this.undoEntries = []; this.redoEntries = [];
+  }
+
+  get timeline(): { undo: readonly string[]; redo: readonly string[] } {
+    return {
+      undo: this.undoEntries.map((entry) => entry.label),
+      redo: [...this.redoEntries].reverse().map((entry) => entry.label),
+    };
   }
 
   get state(): { canUndo: boolean; canRedo: boolean; entries: number; bytes: number } {

@@ -11,8 +11,12 @@ import { perspectiveCopy } from "./perspectiveCopy";
 import { RASTER_EDITOR_COPY } from "./RasterEditorDialog";
 import { BRUSH_UI, BRUSH_PRESET_LABELS, LAYER_UI } from "./brushLayerLabels";
 import { ADJUSTMENT_KIND_LABELS, PANEL_LABELS, CONTROL_LABELS, COLOR_RANGE_LABELS } from "./AdjustmentPanel";
+import { quickTransformCopy, selectionCommandCopy, workbenchCopy } from "./workbenchCopy";
+
+import { editingCopy } from "./editingCopy";
 
 export const IMAGE_STUDIO_LOCALE_CATALOGS: Record<string, Record<string, Record<string, string>>> = {
+  editing: editingCopy,
   core: CORE_LABELS,
   property: PROPERTY_LABELS,
   tool: TOOL_LABELS,
@@ -26,4 +30,7 @@ export const IMAGE_STUDIO_LOCALE_CATALOGS: Record<string, Record<string, Record<
   adjustmentPanel: PANEL_LABELS,
   adjustmentControl: CONTROL_LABELS,
   adjustmentColorRange: COLOR_RANGE_LABELS,
+  workbench: workbenchCopy,
+  quickTransform: quickTransformCopy,
+  selectionCommand: selectionCommandCopy,
 };
