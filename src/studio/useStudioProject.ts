@@ -18,6 +18,8 @@ import type { DocumentHistory } from "../domain/history";
 import type { CanvasSize } from "./useCanvasViewport";
 
 export type PersistenceStatus = "idle" | "saving" | "saved" | "conflict" | "error";
+const AUTOSAVE_DELAY_MS = 1500;
+const AUTOSAVE_RETRY_DELAYS_MS = [3000, 6000, 12000] as const;
 
 export interface UseStudioProjectOptions {
   document: ImageStudioDocument;
@@ -79,6 +81,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
 
   const fileInFlightRef = useRef(false);
   const saveInFlightRef = useRef(false);
+  const [saveFailures, setSaveFailures] = useState(0);
   const draftStoreRef = useRef(new BrowserDraftStore());
   const deepLinkOpenedRef = useRef(false);
   const lastSavedUpdatedAtRef = useRef<string | null>(null);
@@ -92,7 +95,10 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   useEffect(() => { void refreshProjects(); }, [refreshProjects]);
 
   useEffect(() => {
-    const update = () => setOnline(navigator.onLine);
+    const update = () => {
+      if (navigator.onLine) setSaveFailures(0);
+      setOnline(navigator.onLine);
+    };
     window.addEventListener("online", update); window.addEventListener("offline", update);
     void draftStoreRef.current.latestUnsaved().then((draft) => {
       if (draft && draft.document.layers.length) setDraftCandidate({ draft, recovery: "restore", remoteId: null });
@@ -100,8 +106,9 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
     return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
   }, []);
 
-  const saveProject = useCallback(async (override?: ImageStudioDocument): Promise<boolean> => {
+  const saveProject = useCallback(async (override?: ImageStudioDocument, automatic = false): Promise<boolean> => {
     if (fileInFlightRef.current || saveInFlightRef.current) return false;
+    if (!automatic) setSaveFailures(0);
     saveInFlightRef.current = true;
     setPersistence("saving"); setPersistenceError("");
     const before = documentRef.current;
@@ -119,10 +126,12 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
       lastSavedUpdatedAtRef.current = snapshot.metadata.updatedAt;
       setDocument((current) => current.metadata.updatedAt === before.metadata.updatedAt ? result.document : override ? touchDocument({ ...current, title: snapshot.title }) : current);
       setPersistence("saved");
+      setSaveFailures(0);
       void draftStoreRef.current.delete(previousDraftKey).catch(() => undefined);
       void refreshProjects();
       return true;
     } catch (error) {
+      setSaveFailures((count) => count + 1);
       setPersistence(error instanceof ProjectConflictError ? "conflict" : "error");
       setPersistenceError((error as Error).message);
       if (error instanceof ProjectConflictError && projectId) {
@@ -159,10 +168,14 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   }, [document]);
 
   useEffect(() => {
-    if (!projectId || persistence === "saving" || document.metadata.updatedAt === lastSavedUpdatedAtRef.current) return;
-    const timer = window.setTimeout(() => void saveProject(), 1500);
+    if (!projectId || !online || fileBusy || persistence === "saving" || persistence === "conflict"
+      || document.metadata.updatedAt === lastSavedUpdatedAtRef.current) return;
+    const delay = persistence === "error" && saveFailures > 0
+      ? AUTOSAVE_RETRY_DELAYS_MS[saveFailures - 1] : AUTOSAVE_DELAY_MS;
+    if (delay === undefined) return;
+    const timer = window.setTimeout(() => void saveProject(undefined, true), delay);
     return () => window.clearTimeout(timer);
-  }, [document.metadata.updatedAt, persistence, projectId, saveProject]);
+  }, [document.metadata.updatedAt, fileBusy, online, persistence, projectId, saveFailures, saveProject]);
 
   const canSwitchDocument = useCallback(() => !documentRef.current.layers.length
     || documentRef.current.metadata.updatedAt === lastSavedUpdatedAtRef.current || window.confirm(fileCopy[locale].discard), [documentRef, locale]);
@@ -172,6 +185,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
     if (!canSwitchDocument()) return;
     if (!id) {
       const next = createEmptyDocument();
+      setSaveFailures(0);
       historyRef.current.clear(); documentRef.current = next; setDocument(next); setProjectId(null); setProjectRevision(null);
       lastSavedUpdatedAtRef.current = null; setRecoverableOperation(null); setDraftCandidate(null); setPersistence("idle"); refreshHistory((value) => value + 1); return;
     }
@@ -184,6 +198,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
       // Loading is not permission to discard edits made after the switch was confirmed.
       if (documentRef.current !== initial) throw new Error("The document changed while opening the project; open it again to confirm discarding edits");
       const recovery = draftRecovery(draft, { revision: opened.revision, document: opened.document });
+      setSaveFailures(0);
       historyRef.current.clear(); documentRef.current = opened.document; setDocument(opened.document); setProjectId(opened.id); setProjectRevision(opened.revision);
       setRecoverableOperation([...opened.operations].reverse().find((operation) =>
         ["submitting", "running", "result-ready", "delivery-failed", "cancelled"].includes(operation.status)) ?? null);
@@ -191,9 +206,9 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
       setDraftCandidate(draft && recovery !== "none" ? { draft, recovery, remoteId: id } : null);
       refreshHistory((value) => value + 1);
       requestAnimationFrame(() => fitView(opened.document.canvas));
-    } catch (error) { setPersistence("error"); setPersistenceError((error as Error).message); }
+    } catch (error) { setPersistence(persistence === "conflict" ? "conflict" : "error"); setPersistenceError((error as Error).message); }
     finally { fileInFlightRef.current = false; setFileBusy(false); }
-  }, [canSwitchDocument, documentRef, fitView, historyRef, refreshHistory, setDocument]);
+  }, [canSwitchDocument, documentRef, fitView, historyRef, persistence, refreshHistory, setDocument]);
 
   useEffect(() => {
     if (deepLinkOpenedRef.current) return;
@@ -211,6 +226,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
         ? await importOpenRaster(new Uint8Array(await file.arrayBuffer()))
         : await parseProjectPackage(await file.text());
       if (documentRef.current !== initial) throw new Error("Project changed while importing");
+      setSaveFailures(0);
       historyRef.current.clear(); setDocument(next); setProjectId(null); setProjectRevision(null);
       setRecoverableOperation(null); setDraftCandidate(null); lastSavedUpdatedAtRef.current = null; setPersistence("idle");
       refreshHistory((value) => value + 1); requestAnimationFrame(() => fitView(next.canvas));
@@ -261,6 +277,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   const applyDraft = useCallback((asCopy: boolean) => {
     if (!draftCandidate || fileInFlightRef.current || saveInFlightRef.current) return;
     const next = draftCandidate.draft.document;
+    setSaveFailures(0);
     historyRef.current.clear(); setDocument(next);
     if (asCopy) { setProjectId(null); setProjectRevision(null); lastSavedUpdatedAtRef.current = null; setPersistence("idle"); }
     else { setProjectId(draftCandidate.draft.projectId); setProjectRevision(draftCandidate.draft.baseRevision); setPersistence("idle"); }

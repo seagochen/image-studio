@@ -4,7 +4,7 @@ import { addLayer, createDrawingLayer } from "../domain/commands";
 import { createEmptyDocument, touchDocument, type ImageStudioDocument } from "../domain/document";
 import { DocumentHistory } from "../domain/history";
 import { BrowserDraftStore, type ProjectDraft } from "../projects/draftStore";
-import { listImageStudioProjects, openImageStudioProject, saveImageStudioProject, type OpenProject } from "../projects/projectClient";
+import { listImageStudioProjects, openImageStudioProject, ProjectConflictError, saveImageStudioProject, type OpenProject } from "../projects/projectClient";
 import { useStudioProject, type UseStudioProjectResult } from "../studio/useStudioProject";
 
 jest.mock("../projects/projectClient", () => ({
@@ -142,6 +142,69 @@ describe("project lifecycle", () => {
     expect(state.projectId).toBe("project-1");
     await act(async () => { pending.resolve(project("project-2")); await opening; });
     expect(state.projectId).toBe("project-2");
+  });
+
+  it("stops autosaving after a conflict, including after further edits", async () => {
+    (openImageStudioProject as jest.Mock).mockResolvedValue(project());
+    (saveImageStudioProject as jest.Mock).mockRejectedValue(new ProjectConflictError(2));
+    await act(async () => state.openProject("project-1"));
+    await act(async () => edit());
+    await act(async () => jest.advanceTimersByTime(1500));
+    expect(state.persistence).toBe("conflict");
+    expect(state.draftCandidate?.recovery).toBe("restore-as-copy");
+    await act(async () => edit());
+    await act(async () => jest.advanceTimersByTime(60_000));
+    expect(saveImageStudioProject).toHaveBeenCalledTimes(1);
+    expect(BrowserDraftStore.prototype.put).toHaveBeenCalled();
+    (openImageStudioProject as jest.Mock).mockRejectedValueOnce(new Error("Open unavailable"));
+    await act(async () => state.openProject("project-2"));
+    expect(state.persistence).toBe("conflict");
+    await act(async () => jest.advanceTimersByTime(60_000));
+    expect(saveImageStudioProject).toHaveBeenCalledTimes(1);
+    await act(async () => state.applyDraft(true));
+    expect(state.projectId).toBeNull();
+    expect(state.persistence).toBe("idle");
+  });
+
+  it("backs off failed saves and stops after three automatic retries until a manual save", async () => {
+    const opened = project();
+    (openImageStudioProject as jest.Mock).mockResolvedValue(opened);
+    (saveImageStudioProject as jest.Mock).mockRejectedValue(new Error("Network unavailable"));
+    await act(async () => state.openProject("project-1"));
+    await act(async () => edit());
+    await act(async () => jest.advanceTimersByTime(1500));
+    expect(saveImageStudioProject).toHaveBeenCalledTimes(1);
+    for (const [index, delay] of [3000, 6000, 12000].entries()) {
+      await act(async () => jest.advanceTimersByTime(delay - 1));
+      expect(saveImageStudioProject).toHaveBeenCalledTimes(index + 1);
+      await act(async () => jest.advanceTimersByTime(1));
+      expect(saveImageStudioProject).toHaveBeenCalledTimes(index + 2);
+    }
+    await act(async () => edit());
+    await act(async () => jest.advanceTimersByTime(60_000));
+    expect(saveImageStudioProject).toHaveBeenCalledTimes(4);
+    (saveImageStudioProject as jest.Mock).mockImplementation(async (_id, _revision, document) => ({ project: { ...opened, revision: 2 }, document }));
+    await act(async () => { expect(await state.saveProject()).toBe(true); });
+    expect(state.persistence).toBe("saved");
+    await act(async () => jest.advanceTimersByTime(60_000));
+    expect(saveImageStudioProject).toHaveBeenCalledTimes(5);
+  });
+
+  it("pauses offline and resumes dirty autosaves when the browser comes online", async () => {
+    const opened = project();
+    const online = jest.spyOn(navigator, "onLine", "get");
+    (openImageStudioProject as jest.Mock).mockResolvedValue(opened);
+    (saveImageStudioProject as jest.Mock).mockImplementation(async (_id, _revision, document) => ({ project: { ...opened, revision: 2 }, document }));
+    await act(async () => state.openProject("project-1"));
+    online.mockReturnValue(false);
+    await act(async () => { document.defaultView!.dispatchEvent(new Event("offline")); edit(); });
+    await act(async () => jest.advanceTimersByTime(60_000));
+    expect(saveImageStudioProject).not.toHaveBeenCalled();
+    online.mockReturnValue(true);
+    await act(async () => { document.defaultView!.dispatchEvent(new Event("online")); });
+    await act(async () => jest.advanceTimersByTime(1500));
+    expect(saveImageStudioProject).toHaveBeenCalledTimes(1);
+    expect(state.persistence).toBe("saved");
   });
 
 });
