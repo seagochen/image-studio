@@ -196,6 +196,15 @@ npm start                # 直接运行容器服务端（需 IMAGE_STUDIO_CONFIG
 npm run check:bundle     # 构建后检查 bundle 中没有服务端凭证引用
 ```
 
+项目同时安装 TypeScript 7 与 TS 6 兼容包：`tsc` 是 TS 7，负责权威类型检查
+（`npm run typecheck` 和 `npm run typecheck:test`）；`tsc6` 与 `typescript` 包提供
+TS 6 编译器 API，仅供 ts-jest 等依赖该 API 的工具使用。
+
+VS Code 推荐通过命令面板 **TypeScript: Select TypeScript Version → Use TypeScript 7**
+使用原生语言服务。不要把 `typescript.tsdk` 指向 `node_modules/typescript/lib`，
+该包实际是 TS 6 兼容包。待 TS 7.1 提供稳定 API 且 ts-jest 原生支持后，
+计划移除 TS 6 兼容包（见 [#21](https://github.com/seagochen/image-studio/issues/21)）。
+
 路线图与范围取舍见 [docs/ROADMAP.md](docs/ROADMAP.md)（#2）；实体数位笔验收见 [docs/pen-acceptance.md](docs/pen-acceptance.md)（#3）。
 PhotoCraft 布局的浅色工作台、命令搜索、历史跳转、可调整面板、文字编辑、选区存档、参考线、可编辑滤镜链及路径/矢量蒙版见 [docs/photocraft-workbench.md](docs/photocraft-workbench.md)。
 
