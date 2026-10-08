@@ -21,7 +21,7 @@ const layerUiEn = { mergeHelp: "Visible unlocked normal layers only. Adjustments
 type LayerUiLabels = { [Key in keyof typeof layerUiEn]: string };
 export const LAYER_UI: Record<Locale, LayerUiLabels> = {
   en: layerUiEn,
-  ja: { mergeHelp: "通常合成の隣接レイヤーのみ。調整は最下層との結合に対応。", menu: "レイヤー操作", mergeUp: "上と結合", mergeDown: "下と結合", group: "グループ化", groupHelp: "Shift または Ctrl/⌘ を押しながらクリックしてグループ化する図層を選択してください。隣接する図層がない場合はグループ化できません。", ungroup: "グループ解除", rename: "名前を変更", groupName: "グループ" },
-  "zh-CN": { mergeHelp: "仅合并可见、未锁定的正常混合图层；调整层须与最底层合并。", menu: "图层操作", mergeUp: "向上合并", mergeDown: "向下合并", group: "合组", groupHelp: "按住 Shift 或 Ctrl/⌘ 点选要合组的图层，或确保存在可合并的相邻图层。", ungroup: "拆组", rename: "重命名", groupName: "图层组" },
-  "zh-TW": { mergeHelp: "僅合併可見、未鎖定的正常混合圖層；調整層須與最底層合併。", menu: "圖層操作", mergeUp: "向上合併", mergeDown: "向下合併", group: "合組", groupHelp: "按住 Shift 或 Ctrl/⌘ 點選要合組的圖層，或確保存在可合併的相鄰圖層。", ungroup: "拆組", rename: "重新命名", groupName: "圖層群組" },
+  ja: { mergeHelp: "通常合成の隣接レイヤーのみ。調整は最下層との結合に対応。", menu: "レイヤー操作", mergeUp: "上と結合", mergeDown: "下と結合", group: "グループ化", groupHelp: "Shift または Ctrl/⌘ を押しながらクリックしてグループ化するレイヤーを選択するか、隣接するレイヤーがあることを確認してください。", ungroup: "グループ解除", rename: "名前を変更", groupName: "グループ" },
+  "zh-CN": { mergeHelp: "仅合并可见、未锁定的正常混合图层；调整层须与最底层合并。", menu: "图层操作", mergeUp: "向上合并", mergeDown: "向下合并", group: "编组", groupHelp: "按住 Shift 或 Ctrl/⌘ 点选要编组的图层，或确保存在可编组的相邻图层。", ungroup: "取消编组", rename: "重命名", groupName: "图层组" },
+  "zh-TW": { mergeHelp: "僅合併可見、未鎖定的正常混合圖層；調整層須與最底層合併。", menu: "圖層操作", mergeUp: "向上合併", mergeDown: "向下合併", group: "群組", groupHelp: "按住 Shift 或 Ctrl/⌘ 點選要建立群組的圖層，或確保存在可建立群組的相鄰圖層。", ungroup: "取消群組", rename: "重新命名", groupName: "圖層群組" },
 };

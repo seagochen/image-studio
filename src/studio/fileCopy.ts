@@ -38,7 +38,7 @@ export const fileCopy: Record<"en" | "ja" | "zh-CN" | "zh-TW", FileCopy> = {
     failed: "ファイルを処理できませんでした。形式、サイズ、対応レイヤーを確認してください。", busy: "ファイルを処理中…",
     discard: "未保存の変更があります。切り替える前に保存するかOpenRasterを書き出してください。保存せずに続けますか？",
     legacy: "旧プロジェクト (.json)", close: "閉じる",
-    apiKey: "API キー", apiKeyTitle: "skillsmaster.jp API キー", apiKeyHint: "AI 編集はこのキーで {baseUrl} に送信されます。キーはこの Image Studio サーバーにのみ保存され、ブラウザーに再表示されることはありません。",
+    apiKey: "API キー", apiKeyTitle: "skillsmaster.jp API キー", apiKeyHint: "AI編集はこのキーで {baseUrl} に送信されます。キーはこの Image Studio サーバーにのみ保存され、ブラウザーに再表示されることはありません。",
     apiKeyInput: "API キー", apiKeyPlaceholder: "skillsmaster.jp で発行されたキーを貼り付け", apiKeyStatus: "現在のキー", apiKeyNone: "未設定", apiKeySet: "保存済み（{hint}）",
     apiKeyManaged: "サーバー設定ファイルで指定されています（{hint}）。変更は設定ファイルで行ってください。", apiKeyDisabled: "このインストールでは AI が無効です。", apiKeyLoading: "読み込み中…",
     apiKeySaved: "API キーを保存し、確認しました。", apiKeyUnverified: "API キーを保存しましたが、現在は確認できませんでした。", apiKeyRemove: "キーを削除", apiKeyRemoved: "API キーを削除しました。", apiKeyFailed: "API キーを保存できませんでした。",

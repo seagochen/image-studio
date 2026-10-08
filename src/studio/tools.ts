@@ -28,8 +28,8 @@ type ToolLabels = { [Key in keyof typeof toolLabelsEn]: string };
 
 export const TOOL_LABELS = {
   en: toolLabelsEn,
-  ja: { text: "テキスト", shape: "図形", marquee: "長方形選択", ellipseMarquee: "楕円形選択", lasso: "なげなわ選択", polygonLasso: "多角形選択", magicWand: "自動選択", selection: "範囲選択", airbrush: "エアブラシ", smudge: "ぼかし", clone: "スタンプ", gradient: "グラデーション", advanced: "高度な編集", line: "直線", rect: "四角形", star: "星", ellipse: "楕円", triangle: "三角形", pentagon: "五角形", arrow: "矢印" },
-  "zh-CN": { text: "文字", shape: "形状", marquee: "矩形选区", ellipseMarquee: "椭圆选区", lasso: "套索", polygonLasso: "多边形套索", magicWand: "魔棒选区", selection: "像素选区", airbrush: "喷枪", smudge: "涂抹", clone: "仿制图章", gradient: "渐变", advanced: "高级编辑", line: "直线", rect: "矩形", star: "星形", ellipse: "圆形", triangle: "三角形", pentagon: "五边形", arrow: "箭头" },
+  ja: { text: "テキスト", shape: "図形", marquee: "長方形選択", ellipseMarquee: "楕円形選択", lasso: "なげなわ選択", polygonLasso: "多角形選択", magicWand: "自動選択", selection: "範囲選択", airbrush: "エアブラシ", smudge: "指先", clone: "スタンプ", gradient: "グラデーション", advanced: "高度な編集", line: "直線", rect: "四角形", star: "星", ellipse: "楕円", triangle: "三角形", pentagon: "五角形", arrow: "矢印" },
+  "zh-CN": { text: "文字", shape: "形状", marquee: "矩形选区", ellipseMarquee: "椭圆选区", lasso: "套索", polygonLasso: "多边形套索", magicWand: "魔棒选区", selection: "像素选区", airbrush: "喷枪", smudge: "涂抹", clone: "仿制图章", gradient: "渐变", advanced: "高级编辑", line: "直线", rect: "矩形", star: "星形", ellipse: "椭圆", triangle: "三角形", pentagon: "五边形", arrow: "箭头" },
   "zh-TW": { text: "文字", shape: "形狀", marquee: "矩形選取", magicWand: "魔術棒選取", selection: "像素選取", airbrush: "噴槍", smudge: "塗抹", clone: "仿製印章", gradient: "漸層", advanced: "進階編輯", line: "直線", rect: "矩形", star: "星形", ellipse: "圓形", triangle: "三角形", pentagon: "五邊形", arrow: "箭頭" },
 } as Record<Locale, ToolLabels>;
 
