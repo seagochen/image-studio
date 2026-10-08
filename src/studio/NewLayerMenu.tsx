@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { ProductIcon } from "./ProductIcon";
+import { hintTitle } from "./disabledReasons";
 
 interface Props {
   disabled: boolean;
+  /** Shown in the tooltip while the trigger is disabled. */
+  disabledReason?: string;
   label: string;
   paintLabel: string;
   maskLabel: string;
@@ -17,7 +20,7 @@ const VIEWPORT_GAP = 8;
 const ANCHOR_GAP = 6;
 
 /** Lets the layer-panel plus button create either editable drawing content or a mask. */
-export function NewLayerMenu({ disabled, label, paintLabel, maskLabel, onCreatePaint, onCreateMask }: Props): JSX.Element {
+export function NewLayerMenu({ disabled, disabledReason, label, paintLabel, maskLabel, onCreatePaint, onCreateMask }: Props): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -67,7 +70,7 @@ export function NewLayerMenu({ disabled, label, paintLabel, maskLabel, onCreateP
   const choose = (create: () => void) => { create(); setOpen(false); };
 
   return <div className="layer-create-menu">
-    <button ref={triggerRef} type="button" className="layer-create-trigger" disabled={disabled} title={label} aria-label={label}
+    <button ref={triggerRef} type="button" className="layer-create-trigger" disabled={disabled} title={hintTitle(label, disabled ? disabledReason : null)} aria-label={label}
       aria-haspopup="menu" aria-expanded={open} onClick={toggle}><ProductIcon name="plus" /></button>
     {open && createPortal(<div ref={menuRef} className="layer-create-popover" role="menu" aria-label={label}
       style={position ? { left: position.left, top: position.top } : { visibility: "hidden" }}>

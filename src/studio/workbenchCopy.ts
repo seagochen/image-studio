@@ -12,7 +12,7 @@ export const workbenchCopy: Record<Locale, Copy> = {
   en,
   ja: { foreground: "描画色", commands: "コマンド", search: "コマンド・ツール・パネルを検索…", noResults: "一致するコマンドがありません", hint: "↑↓ 選択 · Enter 実行 · Esc 閉じる", history: "履歴", current: "現在の状態", earlier: "以前の状態", later: "やり直し可能な状態", initial: "保持された最初の状態", empty: "編集履歴はありません", tools: "ツール", panels: "パネル", file: "ファイル", edit: "編集", view: "表示", adjustments: "色調補正" },
   "zh-CN": { foreground: "前景色", commands: "命令", search: "搜索命令、工具与面板…", noResults: "没有匹配的命令", hint: "↑↓ 选择 · Enter 执行 · Esc 关闭", history: "历史记录", current: "当前状态", earlier: "之前的状态", later: "可重做的状态", initial: "最早保留的状态", empty: "暂无编辑记录", tools: "工具", panels: "面板", file: "文件", edit: "编辑", view: "视图", adjustments: "调整" },
-  "zh-TW": { foreground: "前景色", commands: "命令", search: "搜尋命令、工具與面板…", noResults: "沒有符合的命令", hint: "↑↓ 選擇 · Enter 執行 · Esc 關閉", history: "歷史記錄", current: "目前狀態", earlier: "之前的狀態", later: "可重做的狀態", initial: "最早保留的狀態", empty: "尚無編輯記錄", tools: "工具", panels: "面板", file: "檔案", edit: "編輯", view: "檢視", adjustments: "調整" },
+  "zh-TW": { foreground: "前景色", commands: "命令", search: "搜尋命令、工具與面板…", noResults: "沒有符合的命令", hint: "↑↓ 選擇 · Enter 執行 · Esc 關閉", history: "歷史紀錄", current: "目前狀態", earlier: "之前的狀態", later: "可重做的狀態", initial: "最早保留的狀態", empty: "尚無編輯記錄", tools: "工具", panels: "面板", file: "檔案", edit: "編輯", view: "檢視", adjustments: "調整" },
 };
 
 export const quickTransformCopy = {

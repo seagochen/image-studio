@@ -41,6 +41,21 @@ const zh: Copy = {
   draw: "标记区域", erase: "擦除标记", clear: "清空", reset: "使用当前选区 / 蒙版", size: "画笔尺寸", mask: "修补蒙版", maskNeeded: "请先标记需要修补的区域。",
   maskLarge: "单边超过 4096 像素的图片，请先在工作台创建选区或关联蒙版。", output: "预计输出", actual: "结果尺寸", unchanged: "保持原始尺寸", layer: "源图层", applyHint: "检查结果后应用为新图层，保留源图层。", stale: "文档已变化，请重新运行后再应用。",
 };
+const zhTW: Copy = {
+  denoise: ["去噪", "在 100% 下檢查顆粒和細節。模型自動去噪，無需設定強度。", "雜訊處理"],
+  deblur: ["去模糊", "調整修復強度，在原始尺寸下檢查邊緣和細節。", "清晰度修復"],
+  upscale: ["超解析度", "選擇放大倍率和長邊上限，套用前確認結果尺寸。", "輸出尺寸"],
+  background_remove: ["去背", "切換透明、淺色和深色背景檢查邊緣。預覽背景不會寫入圖片。", "去背設定"],
+  old_photo_restore: ["老照片修復", "修復褪色、模糊和受損的老照片，設定修復強度和輸出倍率。", "照片修復"],
+  colorize: ["上色", "選擇上色模型，對照原圖檢查膚色和場景色彩。", "上色設定"],
+  object_remove: ["局部修補", "標記需要移除或修復的區域。紅色區域會被填補，未標記區域保留。", "修補區域"],
+  adjust: "重新調整",
+  unavailable: "此模型目前尚不可用。",
+  original: "原圖", result: "結果", compare: "對比", apply: "套用為新圖層", automatic: "自動處理，無需調整模型參數。",
+  fit: "適合視窗", detail: "100%", zoom: "預覽縮放", background: "預覽背景", transparent: "透明", light: "淺色", dark: "深色",
+  draw: "標記區域", erase: "擦除標記", clear: "清空", reset: "使用目前選取範圍 / 遮罩", size: "筆刷尺寸", mask: "修補遮罩", maskNeeded: "請先標記需要修補的區域。",
+  maskLarge: "單邊超過 4096 像素的圖片，請先在工作區建立選取範圍或關聯遮罩。", output: "預計輸出", actual: "結果尺寸", unchanged: "保持原始尺寸", layer: "來源圖層", applyHint: "檢查結果後套用為新圖層，保留來源圖層。", stale: "文件已變更，請重新執行後再套用。",
+};
 const ja: Copy = {
   ...en, denoise: ["ノイズ除去", "100%表示で粒状感と細部を確認します。自動でノイズを除去します。", "ノイズ処理"],
   deblur: ["ぼかし除去", "修復強度を調整し、輪郭と細部を確認します。", "鮮明化"],
@@ -54,9 +69,10 @@ const ja: Copy = {
   original: "原画像", result: "結果", compare: "比較", apply: "新しいレイヤーとして適用", automatic: "自動処理：調整可能なパラメータはありません。",
   fit: "画面に合わせる", detail: "100%", zoom: "表示倍率", background: "プレビュー背景", transparent: "透明", light: "明るい", dark: "暗い",
   draw: "範囲を塗る", erase: "消す", clear: "クリア", reset: "現在の選択 / マスクを使用", size: "ブラシサイズ", mask: "修復マスク", maskNeeded: "修復範囲を指定してください。",
-  maskLarge: "4096pxを超える画像は、先に作業台で選択範囲かマスクを作成してください。", output: "予定サイズ", actual: "結果サイズ", unchanged: "原画像のサイズ", layer: "元レイヤー", applyHint: "結果を確認してから、新しいレイヤーに適用します。", stale: "文書が変更されました。再実行してください。",
+  maskLarge: "1辺が4096pxを超える画像は、先にワークスペースで選択範囲かマスクを作成してください。", output: "予定サイズ", actual: "結果サイズ", unchanged: "原画像のサイズ", layer: "元レイヤー", applyHint: "結果を確認してから、新しいレイヤーに適用します。", stale: "ドキュメントが変更されました。再実行してから適用してください。",
 };
 export function aiEditorCopy(language: string): Copy {
+  if (language === "zh-TW") return zhTW;
   if (language.startsWith("zh")) return zh;
   return language === "ja" ? ja : en as Copy;
 }

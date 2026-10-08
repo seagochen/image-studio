@@ -2,9 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "commonjs",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "isolatedModules": true,
-    "types": ["node", "jest", "jsdom"],
+    "types": ["vite/client", "node", "jest", "jsdom"],
     "noEmit": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

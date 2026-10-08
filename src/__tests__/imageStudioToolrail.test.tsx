@@ -8,7 +8,7 @@ const labels = Object.fromEntries([
 function render(tool: Tool = "select", overrides: Partial<React.ComponentProps<typeof ToolRail>> = {}): HTMLElement {
   document.body.innerHTML = renderToStaticMarkup(<ToolRail
     tool={tool} shapeTool="rect" labels={labels} toolLabel={(name) => name} t={(key) => key}
-    perspectiveLabel="perspective" rasterToolDisabled={false} selectionToolDisabled={false} magicWandDisabled={false} oversizedRaster={false} canEditRaster canUseAi
+    perspectiveLabel="perspective" brushBlocker={null} rasterToolBlocker={null} selectionToolBlocker={null} magicWandBlocker={null} rasterEditBlocker={null} aiBlocker={null}
     onActivate={jest.fn()} onShapeChange={jest.fn()} onPickColor={jest.fn()}
     onOpenRasterEditor={jest.fn()} onOpenAi={jest.fn()} {...overrides} />);
   return document.body;
@@ -25,12 +25,18 @@ describe("Image Studio direct toolrail", () => {
   });
 
   it("marks the active tool and disables raster-only actions when no editable raster exists", () => {
-    const root = render("brush", { rasterToolDisabled: true, selectionToolDisabled: true, magicWandDisabled: true, oversizedRaster: true, canEditRaster: false, canUseAi: false });
+    const root = render("brush", { brushBlocker: "too large", rasterToolBlocker: "raster only", selectionToolBlocker: "no layer", magicWandBlocker: "raster only", rasterEditBlocker: "raster only", aiBlocker: "save first" });
     expect(root.querySelector('[aria-label="brush"]')?.getAttribute("aria-pressed")).toBe("true");
     expect((root.querySelector('[aria-label="brush"]') as HTMLButtonElement).disabled).toBe(true);
     expect((root.querySelector('[aria-label="magicWand"]') as HTMLButtonElement).disabled).toBe(true);
     expect((root.querySelector('[aria-label="adjust"]') as HTMLButtonElement).disabled).toBe(true);
     expect((root.querySelector('[aria-label="aiEdit"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("explains in the tooltip why a tool is disabled", () => {
+    const root = render("select", { aiBlocker: "save first" });
+    expect(root.querySelector('[aria-label="aiEdit"]')?.getAttribute("title")).toBe("aiEdit\nsave first");
+    expect(root.querySelector('[aria-label="adjust"]')?.getAttribute("title")).toBe("adjust");
   });
 
   it("exposes explicit advanced editor actions without a nested advanced menu", () => {

@@ -1,6 +1,8 @@
 import type { DocumentHistory } from "../domain/history";
 import type { Locale, MessageKey } from "../i18n";
 import { workbenchCopy } from "./workbenchCopy";
+import { disabledReasonCopy, hintTitle } from "./disabledReasons";
+import { editingCopy } from "./editingCopy";
 
 export function HistoryPanel({ timeline, locale, onUndo, onRedo, onSeek, disabled, t }: {
   timeline: DocumentHistory["timeline"]; locale: Locale; onUndo: () => void; onRedo: () => void;
@@ -8,10 +10,13 @@ export function HistoryPanel({ timeline, locale, onUndo, onRedo, onSeek, disable
   t: (key: MessageKey) => string;
 }): JSX.Element {
   const copy = workbenchCopy[locale];
+  const reasons = disabledReasonCopy[locale];
+  const undoBlocker = disabled ? editingCopy[locale].busy : timeline.undo.length ? null : reasons.nothingToUndo;
+  const redoBlocker = disabled ? editingCopy[locale].busy : timeline.redo.length ? null : reasons.nothingToRedo;
   return <div className="history-panel">
     <div className="history-controls">
-      <button disabled={disabled || !timeline.undo.length} onClick={onUndo}>{t("undo")}</button>
-      <button disabled={disabled || !timeline.redo.length} onClick={onRedo}>{t("redo")}</button>
+      <button disabled={Boolean(undoBlocker)} title={hintTitle(t("undo"), undoBlocker)} onClick={onUndo}>{t("undo")}</button>
+      <button disabled={Boolean(redoBlocker)} title={hintTitle(t("redo"), redoBlocker)} onClick={onRedo}>{t("redo")}</button>
     </div>
     {!timeline.undo.length && !timeline.redo.length ? <p className="panel-empty">{copy.empty}</p> : <>
       <ol aria-label={copy.earlier} className="history-states">

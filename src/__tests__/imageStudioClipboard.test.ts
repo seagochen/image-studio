@@ -1,6 +1,6 @@
 import { copyLayer, pasteLayer } from "../domain/layerClipboard";
 import { createEmptyDocument } from "../domain/document";
-import { clearSelectedVectorPixels, addLayer, createDrawingLayer, deleteLayer } from "../domain/commands";
+import { clearSelectedVectorPixels, addLayer, createDrawingLayer, createGroupLayer, deleteLayer } from "../domain/commands";
 import { decodeSelectionRuns } from "../domain/selectionMaskRuns";
 import { DocumentHistory } from "../domain/history";
 import { bindConfiguredShortcuts, DEFAULT_SHORTCUTS } from "../domain/shortcutSettings";
@@ -30,7 +30,7 @@ it("copies group descendants and remaps companion masks", () => {
   const base = createDrawingLayer(empty, "paint", "Child");
   const mask = { ...createDrawingLayer(empty, "mask", "Mask"), parentId: "group" };
   const child = { ...base, parentId: "group", rasterMaskId: mask.id };
-  const group = { ...base, id: "group", type: "group" as const };
+  const group = { ...createGroupLayer(empty, "Group"), id: "group" };
   const source = { ...empty, layers: [group, child, mask], selection: { layerId: group.id } };
   const copied = copyLayer(source)!;
   const pasted = pasteLayer(empty, copied);
