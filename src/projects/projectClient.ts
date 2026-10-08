@@ -50,23 +50,12 @@ export async function openImageStudioProject(projectId: string, signal?: AbortSi
 }
 
 export async function saveImageStudioProject(
-  projectId: string | null,
-  revision: number | null,
+  projectId: string,
+  revision: number,
   document: ImageStudioDocument,
   retainedAssetIds: string[] = [],
 ): Promise<{ project: ProjectSummary; document: ImageStudioDocument }> {
-  let id = projectId;
-  let expectedRevision = revision;
-  if (!id) {
-    const skeleton = { ...cloneDocument(document), layers: [], selection: { layerId: null } };
-    const response = await fetch("/image-studio/projects", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: document.title, document: skeleton }),
-    });
-    const created = await json(response);
-    if (!response.ok) throw new Error(detail(created, "Project creation failed"));
-    id = String(created.id);
-    expectedRevision = Number(created.revision);
-  }
+  const id = projectId;
 
   const uploaded = cloneDocument(document);
   const stagedIds: string[] = [];
@@ -82,7 +71,7 @@ export async function saveImageStudioProject(
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: uploaded.title,
-        revision: expectedRevision,
+        revision,
         document: projectDocumentForSave(uploaded),
         retainedAssetIds,
       }),
@@ -95,6 +84,20 @@ export async function saveImageStudioProject(
     await Promise.allSettled(stagedIds.map((assetId) => fetch(`/image-studio/projects/${encodeURIComponent(id!)}/assets/${encodeURIComponent(assetId)}`, { method: "DELETE" })));
     throw error;
   }
+}
+
+/** Creation is separate so callers retain identity even if subsequent uploads fail. */
+export async function createImageStudioProject(document: ImageStudioDocument): Promise<ProjectSummary> {
+  const skeleton = { ...cloneDocument(document), layers: [], selection: { layerId: null } };
+  const response = await fetch("/image-studio/projects", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: document.title, document: skeleton }),
+  });
+  const created = await json(response);
+  if (!response.ok) throw new Error(detail(created, "Project creation failed"));
+  if (typeof created.id !== "string" || !created.id || !Number.isInteger(created.revision) || Number(created.revision) < 1) {
+    throw new Error("Project creation response has no valid identity");
+  }
+  return created as unknown as ProjectSummary;
 }
 
 export async function completeImageStudioAiOperation(projectId: string, operationId: string, resultLayerId: string): Promise<void> {

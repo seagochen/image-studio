@@ -4,12 +4,13 @@ import { addLayer, createDrawingLayer } from "../domain/commands";
 import { createEmptyDocument, touchDocument, type ImageStudioDocument } from "../domain/document";
 import { DocumentHistory } from "../domain/history";
 import { BrowserDraftStore, type ProjectDraft } from "../projects/draftStore";
-import { listImageStudioProjects, openImageStudioProject, ProjectConflictError, saveImageStudioProject, type OpenProject } from "../projects/projectClient";
+import { createImageStudioProject, listImageStudioProjects, openImageStudioProject, ProjectConflictError, saveImageStudioProject, type OpenProject } from "../projects/projectClient";
+import { rasterLayerFromImage } from "../domain/importImage";
 import { useStudioProject, type UseStudioProjectResult } from "../studio/useStudioProject";
 
 jest.mock("../projects/projectClient", () => ({
   ...jest.requireActual("../projects/projectClient"),
-  listImageStudioProjects: jest.fn(), openImageStudioProject: jest.fn(), saveImageStudioProject: jest.fn(),
+  createImageStudioProject: jest.fn(), listImageStudioProjects: jest.fn(), openImageStudioProject: jest.fn(), saveImageStudioProject: jest.fn(),
 }));
 
 function deferred<T>() {
@@ -29,6 +30,7 @@ describe("project lifecycle", () => {
   let state: UseStudioProjectResult;
   let current: ImageStudioDocument;
   let edit: () => void;
+  let addRaster: () => void;
   let history: DocumentHistory;
   let fit: jest.Mock;
 
@@ -47,6 +49,7 @@ describe("project lifecycle", () => {
     (listImageStudioProjects as jest.Mock).mockResolvedValue([]);
     (openImageStudioProject as jest.Mock).mockReset();
     (saveImageStudioProject as jest.Mock).mockReset();
+    (createImageStudioProject as jest.Mock).mockReset();
     history = new DocumentHistory(); fit = jest.fn();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     function Harness() {
@@ -55,6 +58,9 @@ describe("project lifecycle", () => {
       const historyRef = useRef(history);
       const [, refreshHistory] = useState(0);
       current = document;
+      addRaster = () => setDocument((before) => addLayer(before, rasterLayerFromImage({
+        dataUrl: "data:image/png;base64,iVBORw0KGgo=", mimeType: "image/png", width: 10, height: 10, name: "Source",
+      })));
       edit = () => setDocument((before) => {
         const next = touchDocument(addLayer(before, createDrawingLayer(before, "paint", "New edit")));
         next.metadata.updatedAt = new Date(Date.parse(before.metadata.updatedAt) + 1).toISOString();
@@ -207,4 +213,35 @@ describe("project lifecycle", () => {
     expect(state.persistence).toBe("saved");
   });
 
+  it.each(["upload", "save"])("reuses a newly created project after %s failure and keeps the local draft", async (failure) => {
+    const actual = jest.requireActual<typeof import("../projects/projectClient")>("../projects/projectClient");
+    jest.mocked(createImageStudioProject).mockImplementation(actual.createImageStudioProject);
+    jest.mocked(saveImageStudioProject).mockImplementation(actual.saveImageStudioProject);
+    const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+    const created = project("created-project");
+    const asset = (id: string) => ({ id, width: 10, height: 10, mimeType: "image/png" });
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValueOnce(response(created));
+    if (failure === "upload") fetchMock.mockResolvedValueOnce(response({ detail: "Upload unavailable" }, 502));
+    else fetchMock.mockResolvedValueOnce(response(asset("staged"))).mockResolvedValueOnce(response({ detail: "Save unavailable" }, 502))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    fetchMock.mockResolvedValueOnce(response(asset("final"))).mockResolvedValueOnce(response({ ...created, revision: 2 }));
+    await act(async () => addRaster());
+    const unsaved = current;
+    await act(async () => { expect(await state.saveProject()).toBe(false); });
+    expect(state.projectId).toBe("created-project");
+    expect(state.projectRevision).toBe(1);
+    expect(current).toBe(unsaved);
+    await act(async () => jest.advanceTimersByTime(700));
+    expect(BrowserDraftStore.prototype.put).toHaveBeenCalledWith(expect.objectContaining({ projectId: "created-project", baseRevision: 1, document: unsaved }));
+    await act(async () => { expect(await state.saveProject()).toBe(true); });
+    expect(state.projectRevision).toBe(2);
+    expect(BrowserDraftStore.prototype.delete).toHaveBeenCalledWith(`unsaved:${unsaved.id}`);
+    expect(fetchMock.mock.calls.filter(([url, options]) => url === "/image-studio/projects" && options?.method === "POST")).toHaveLength(1);
+    const saved = current;
+    expect(saved.layers[0]).toMatchObject({ source: { kind: "asset", assetId: "final" } });
+    jest.mocked(openImageStudioProject).mockImplementation(actual.openImageStudioProject);
+    fetchMock.mockResolvedValueOnce(response({ ...created, revision: 2, document: saved, assets: [asset("final")] }));
+    await act(async () => state.openProject("created-project"));
+    expect(current.layers[0]).toMatchObject({ source: { kind: "asset", assetId: "final" } });
+  });
 });

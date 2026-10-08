@@ -10,7 +10,7 @@ import { importOpenRaster } from "../projects/openRaster";
 import { BrowserDraftStore, draftRecovery, type ProjectDraft, type DraftRecovery } from "../projects/draftStore";
 import { parseProjectPackage, PROJECT_PACKAGE_MAX_BYTES } from "../projects/projectPackage";
 import {
-  listImageStudioProjects, openImageStudioProject, ProjectConflictError,
+  createImageStudioProject, listImageStudioProjects, openImageStudioProject, ProjectConflictError,
   saveImageStudioProject, type ProjectSummary,
 } from "../projects/projectClient";
 import { fileCopy } from "./fileCopy";
@@ -113,11 +113,18 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
     setPersistence("saving"); setPersistenceError("");
     const before = documentRef.current;
     const snapshot = override ?? before;
+    let saveId = projectId;
+    let saveRevision = projectRevision;
     try {
       const previousDraftKey = draftKey(projectId, snapshot);
+      if (!saveId) {
+        const created = await createImageStudioProject(snapshot);
+        saveId = created.id; saveRevision = created.revision;
+        setProjectId(saveId); setProjectRevision(saveRevision);
+      }
       const result = await saveImageStudioProject(
-        projectId,
-        projectRevision,
+        saveId,
+        saveRevision!,
         snapshot,
         historyRef.current.retainedAssetIds(),
       );
@@ -127,16 +134,18 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
       setDocument((current) => current.metadata.updatedAt === before.metadata.updatedAt ? result.document : override ? touchDocument({ ...current, title: snapshot.title }) : current);
       setPersistence("saved");
       setSaveFailures(0);
-      void draftStoreRef.current.delete(previousDraftKey).catch(() => undefined);
+      for (const key of new Set([previousDraftKey, draftKey(null, snapshot)])) {
+        void draftStoreRef.current.delete(key).catch(() => undefined);
+      }
       void refreshProjects();
       return true;
     } catch (error) {
       setSaveFailures((count) => count + 1);
       setPersistence(error instanceof ProjectConflictError ? "conflict" : "error");
       setPersistenceError((error as Error).message);
-      if (error instanceof ProjectConflictError && projectId) {
-        const draft: ProjectDraft = { key: draftKey(projectId, snapshot), projectId, baseRevision: projectRevision, savedAt: new Date().toISOString(), document: snapshot };
-        setDraftCandidate({ draft, recovery: "restore-as-copy", remoteId: projectId });
+      if (error instanceof ProjectConflictError && saveId) {
+        const draft: ProjectDraft = { key: draftKey(saveId, snapshot), projectId: saveId, baseRevision: saveRevision, savedAt: new Date().toISOString(), document: snapshot };
+        setDraftCandidate({ draft, recovery: "restore-as-copy", remoteId: saveId });
       }
       return false;
     } finally { saveInFlightRef.current = false; }

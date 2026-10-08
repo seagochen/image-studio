@@ -1,5 +1,5 @@
 import {
-  openImageStudioProject, ProjectConflictError, projectDocumentForSave, saveImageStudioProject,
+  createImageStudioProject, openImageStudioProject, ProjectConflictError, projectDocumentForSave, saveImageStudioProject,
 } from "../projects/projectClient";
 import { createEmptyDocument, IMAGE_STUDIO_DOCUMENT_VERSION } from "../domain/document";
 import { rasterLayerFromImage } from "../domain/importImage";
@@ -19,7 +19,8 @@ describe("Image Studio project client", () => {
       .mockResolvedValueOnce(response({ id: "asset-1", mimeType: "image/png", width: 10, height: 10, sizeBytes: 10, url: "https://assets.test/a" }))
       .mockResolvedValueOnce(response({ id: "project-1", title: "Portrait", revision: 2, documentVersion: IMAGE_STUDIO_DOCUMENT_VERSION }));
 
-    const saved = await saveImageStudioProject(null, null, document, ["asset-from-undo-history"]);
+    const created = await createImageStudioProject(document);
+    const saved = await saveImageStudioProject(created.id, created.revision, document, ["asset-from-undo-history"]);
     expect(saved.project.revision).toBe(2);
     expect(saved.document.layers[0].type === "raster" && saved.document.layers[0].source).toMatchObject({
       kind: "asset", assetId: "asset-1", url: "http://localhost/image-studio/projects/project-1/assets/asset-1",
