@@ -101,7 +101,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   }, []);
 
   const saveProject = useCallback(async (override?: ImageStudioDocument): Promise<boolean> => {
-    if (saveInFlightRef.current) return false;
+    if (fileInFlightRef.current || saveInFlightRef.current) return false;
     saveInFlightRef.current = true;
     setPersistence("saving"); setPersistenceError("");
     const before = documentRef.current;
@@ -172,22 +172,28 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
     if (!canSwitchDocument()) return;
     if (!id) {
       const next = createEmptyDocument();
-      historyRef.current.clear(); setDocument(next); setProjectId(null); setProjectRevision(null);
+      historyRef.current.clear(); documentRef.current = next; setDocument(next); setProjectId(null); setProjectRevision(null);
       lastSavedUpdatedAtRef.current = null; setRecoverableOperation(null); setDraftCandidate(null); setPersistence("idle"); refreshHistory((value) => value + 1); return;
     }
+    const initial = documentRef.current;
+    fileInFlightRef.current = true; setFileBusy(true);
     setPersistence("saving"); setPersistenceError("");
     try {
       const opened = await openImageStudioProject(id);
-      historyRef.current.clear(); setDocument(opened.document); setProjectId(opened.id); setProjectRevision(opened.revision);
+      const draft = await draftStoreRef.current.get(`project:${id}`).catch(() => null);
+      // Loading is not permission to discard edits made after the switch was confirmed.
+      if (documentRef.current !== initial) throw new Error("The document changed while opening the project; open it again to confirm discarding edits");
+      const recovery = draftRecovery(draft, { revision: opened.revision, document: opened.document });
+      historyRef.current.clear(); documentRef.current = opened.document; setDocument(opened.document); setProjectId(opened.id); setProjectRevision(opened.revision);
       setRecoverableOperation([...opened.operations].reverse().find((operation) =>
         ["submitting", "running", "result-ready", "delivery-failed", "cancelled"].includes(operation.status)) ?? null);
       lastSavedUpdatedAtRef.current = opened.document.metadata.updatedAt; setPersistence("saved");
-      const draft = await draftStoreRef.current.get(`project:${id}`).catch(() => null);
-      const recovery = draftRecovery(draft, { revision: opened.revision, document: opened.document });
       setDraftCandidate(draft && recovery !== "none" ? { draft, recovery, remoteId: id } : null);
+      refreshHistory((value) => value + 1);
       requestAnimationFrame(() => fitView(opened.document.canvas));
     } catch (error) { setPersistence("error"); setPersistenceError((error as Error).message); }
-  }, [canSwitchDocument, fitView, historyRef, refreshHistory, setDocument]);
+    finally { fileInFlightRef.current = false; setFileBusy(false); }
+  }, [canSwitchDocument, documentRef, fitView, historyRef, refreshHistory, setDocument]);
 
   useEffect(() => {
     if (deepLinkOpenedRef.current) return;
@@ -243,6 +249,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   }, [canSwitchDocument, importFile, importProjectFile, locale]);
 
   const renameProject = useCallback(async (title: string): Promise<boolean> => {
+    if (fileInFlightRef.current || saveInFlightRef.current) return false;
     if (!title.trim() || title.trim().length > 160) { setFileError(fileCopy[locale].invalidName); return false; }
     const next = touchDocument({ ...documentRef.current, title: title.trim() });
     if (projectId) return saveProject(next);
@@ -252,7 +259,7 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   }, [documentRef, historyRef, locale, projectId, refreshHistory, saveProject, setDocument]);
 
   const applyDraft = useCallback((asCopy: boolean) => {
-    if (!draftCandidate) return;
+    if (!draftCandidate || fileInFlightRef.current || saveInFlightRef.current) return;
     const next = draftCandidate.draft.document;
     historyRef.current.clear(); setDocument(next);
     if (asCopy) { setProjectId(null); setProjectRevision(null); lastSavedUpdatedAtRef.current = null; setPersistence("idle"); }
@@ -267,9 +274,10 @@ export function useStudioProject(options: UseStudioProjectOptions): UseStudioPro
   }, [draftCandidate]);
 
   const discardAndOpenRemote = useCallback(async () => {
+    if (fileInFlightRef.current || saveInFlightRef.current) return;
     const candidate = draftCandidate;
     if (!candidate?.remoteId) return;
-    await draftStoreRef.current.delete(candidate.draft.key).catch(() => undefined);
+    void draftStoreRef.current.delete(candidate.draft.key).catch(() => undefined);
     setDraftCandidate(null);
     await openProject(candidate.remoteId);
   }, [draftCandidate, openProject]);
