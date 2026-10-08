@@ -1,4 +1,5 @@
 import { tracePath } from "./vectorPath";
+import { arrowHeadPoints } from "./arrowGeometry";
 import { renderText } from "./textLayout";
 import type { AnnotationLayer, DrawingLayer } from "./document";
 import { paintSelectionRuns } from "./selectionMaskRuns";
@@ -103,17 +104,16 @@ export function renderAnnotationLayer(layer: AnnotationLayer, createCanvas: (wid
         }
         case "arrow": {
           const [start, end] = element.points;
-          const angle = Math.atan2(end.y - start.y, end.x - start.x);
-          const headLength = Math.max(10, element.strokeWidth * 4);
+          const [tip, left, right] = arrowHeadPoints(element);
           context.beginPath();
           context.moveTo(start.x, start.y);
           context.lineTo(end.x, end.y);
           context.stroke();
           context.beginPath();
           context.fillStyle = element.stroke;
-          context.moveTo(end.x, end.y);
-          context.lineTo(end.x - headLength * Math.cos(angle - Math.PI / 7), end.y - headLength * Math.sin(angle - Math.PI / 7));
-          context.lineTo(end.x - headLength * Math.cos(angle + Math.PI / 7), end.y - headLength * Math.sin(angle + Math.PI / 7));
+          context.moveTo(tip.x, tip.y);
+          context.lineTo(left.x, left.y);
+          context.lineTo(right.x, right.y);
           context.closePath();
           context.fill();
           break;

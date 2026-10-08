@@ -1,5 +1,6 @@
 import { pathData } from "../domain/vectorPath";
-import { Path, Arrow, Ellipse, Group, Line, Rect, RegularPolygon, Text } from "react-konva";
+import { arrowHeadPoints } from "../domain/arrowGeometry";
+import { Path, Ellipse, Group, Line, Rect, RegularPolygon, Text } from "react-konva";
 import type Konva from "konva";
 import { canvasBlendMode, type AnnotationLayer } from "../domain/document";
 
@@ -54,8 +55,12 @@ export function AnnotationNode({ layer, selectable, transformable = true, onSele
             return <Line key={element.id} {...events} points={element.points.flatMap((point) => [point.x, point.y])}
               stroke={element.stroke} strokeWidth={element.strokeWidth} lineCap="round" listening={selectable} />;
           case "arrow":
-            return <Arrow key={element.id} {...events} points={element.points.flatMap((point) => [point.x, point.y])}
-              stroke={element.stroke} fill={element.stroke} strokeWidth={element.strokeWidth} listening={selectable} />;
+            return <Group key={element.id} {...events} listening={selectable}>
+              <Line points={element.points.flatMap((point) => [point.x, point.y])}
+                stroke={element.stroke} strokeWidth={element.strokeWidth} lineCap="round" listening={selectable} />
+              <Line points={arrowHeadPoints(element).flatMap((point) => [point.x, point.y])}
+                closed fill={element.stroke} strokeEnabled={false} listening={selectable} />
+            </Group>;
           default:
             return null;
         }

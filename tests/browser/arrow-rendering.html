@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio arrow rendering parity</title>
+<div id="stage"></div><pre id="result">running</pre>
+<script type="module">
+  import React from "react";
+  import { createRoot } from "react-dom/client";
+  import { Stage, Layer } from "react-konva";
+  import { AnnotationNode } from "../../src/studio/AnnotationNode.tsx";
+  import { createAnnotationLayer } from "../../src/domain/commands.ts";
+  import { createEmptyDocument, parseDocument, serializeDocument } from "../../src/domain/document.ts";
+  import { renderImageStudioDocument } from "../../src/domain/exportImage.ts";
+
+  const result = document.getElementById("result"), root = createRoot(document.getElementById("stage"));
+  try {
+    const samples = [];
+    for (const strokeWidth of [1, 2, 8, 16]) for (const end of [{ x: 240, y: 150 }, { x: 150, y: 40 }, { x: 60, y: 210 }]) {
+      const initial = { ...createEmptyDocument(), canvas: { width: 300, height: 300 } };
+      const layer = { ...createAnnotationLayer(initial, "Arrow"), elements: [{
+        id: "arrow", kind: "arrow", points: [{ x: 150, y: 150 }, end], stroke: "#112233", strokeWidth,
+      }] };
+      const document = parseDocument(serializeDocument({ ...initial, layers: [layer] }));
+      let stage;
+      root.render(React.createElement(Stage, { width: 300, height: 300, ref: node => { stage = node; } },
+        React.createElement(Layer, {}, React.createElement(AnnotationNode, { layer, selectable: true, onSelect() {}, onTransform() {} }))));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const interactive = stage.toCanvas({ pixelRatio: 1 });
+      const exported = await renderImageStudioDocument(document);
+      const a = interactive.getContext("2d").getImageData(0, 0, 300, 300).data;
+      const b = exported.getContext("2d").getImageData(0, 0, 300, 300).data;
+      let differingPixels = 0;
+      for (let i = 0; i < a.length; i += 4) if (a.slice(i, i + 4).some((value, c) => value !== b[i + c])) differingPixels++;
+      if (differingPixels) throw new Error(`${strokeWidth}px arrow at ${JSON.stringify(end)} differs in ${differingPixels} pixels`);
+      samples.push({ strokeWidth, end, differingPixels });
+      interactive.width = exported.width = 1;
+    }
+    result.textContent = JSON.stringify({ status: "passed", samples });
+  } catch (error) { result.textContent = JSON.stringify({ status: "failed", error: error.message }); }
+  finally { root.unmount(); }
+</script>
