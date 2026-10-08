@@ -10,6 +10,7 @@ import { LayerEffectsPanel } from "./LayerEffectsPanel";
 import { CanvasCrop } from "./CanvasCrop";
 import { cropCanvas, snapLayer } from "../domain/layoutCommands";
 import { editingCopy } from "./editingCopy";
+import { disabledReasonCopy, hintTitle, layerEditBlocker, type DisabledReason } from "./disabledReasons";
 import { copyLayer, pasteLayer } from "../domain/layerClipboard";
 import { AnnotationProperties } from "./AnnotationProperties";
 import { PROPERTY_LABELS } from "./propertyLabels";
@@ -511,7 +512,18 @@ export function Studio(): JSX.Element {
       setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name, coverage });
     } catch { setError("editFailed"); }
   };
-  const canUseAi = Boolean(selected?.type === "raster" && selectedEditable && projectId && persistence === "saved" && document.metadata.updatedAt === lastSavedUpdatedAtRef.current);
+  const reasonCopy = disabledReasonCopy[locale];
+  const reason = (key: DisabledReason | null): string | null => key ? reasonCopy[key] : null;
+  const selectedBlocker: DisabledReason | null = selected ? layerEditBlocker(document.layers, selected) : "noLayer";
+  const rasterBlocker = !selected ? "noLayer" : selected.type !== "raster" ? "rasterOnly" : selectedBlocker;
+  const projectBlocker: DisabledReason | null = !projectId ? "projectUnsaved" : persistence === "saving" ? "saving"
+    : persistence === "conflict" ? "saveConflict" : persistence === "error" ? "saveFailed"
+    : persistence !== "saved" || document.metadata.updatedAt !== lastSavedUpdatedAtRef.current ? "unsavedChanges" : null;
+  const pixelTooLargeReason = selectedRasterTooLarge ? t("pixelTooLarge") : null;
+  const rasterToolBlocker = reason(rasterBlocker) ?? pixelTooLargeReason;
+  const aiBlocker = reason(rasterBlocker ?? projectBlocker);
+  const canUseAi = !aiBlocker;
+  const saveBlocker = !document.layers.length ? reasonCopy.noDocument : fileBusy ? reasonCopy.fileBusy : persistence === "saving" ? reasonCopy.saving : null;
   const commands = studioCommands({ locale, t, toolLabel, toolEnabled,
     toolShortcut: (next) => shortcutBindings[next as ShortcutAction],
     activateTool: (next) => next === "eyedropper" ? void pickScreenColor() : activateTool(next),
@@ -604,7 +616,7 @@ export function Studio(): JSX.Element {
           onZoomIn={() => zoomAt(1.2)} onZoomOut={() => zoomAt(1 / 1.2)} onActualSize={actualSize} onFit={() => fitView()}
           onToggleNavigator={() => setNavigatorCollapsed((value) => !value)} />
         <div className="header-actions">
-          <button className="primary save-button" onClick={() => void manuallySaveProject()} disabled={fileBusy || persistence === "saving" || !document.layers.length}>
+          <button className="primary save-button" onClick={() => void manuallySaveProject()} disabled={Boolean(saveBlocker)} title={hintTitle(t("save"), saveBlocker)}>
             <ProductIcon name="save" />
             <span>{persistence === "saving" ? t("saving") : t("save")}</span>
           </button>
@@ -654,12 +666,10 @@ export function Studio(): JSX.Element {
       {historyBusy && <p role="status">{editingCopy[locale].busy}</p>}
       <main className="studio-workspace" ref={node => node?.toggleAttribute("inert", historyBusy)}>
         <ToolRail tool={tool} shapeTool={shapeTool} labels={toolLabels} toolLabel={toolLabel} t={t}
-          perspectiveLabel={perspectiveCopy[locale].title} oversizedRaster={Boolean(selectedRasterTooLarge)}
-          rasterToolDisabled={!selected || selected.type !== "raster" || !selectedEditable || Boolean(selectedRasterTooLarge)}
-          selectionToolDisabled={!selected || !["raster", "paint", "annotation"].includes(selected.type) || !selectedEditable}
-          magicWandDisabled={selected?.type !== "raster" || !selectedEditable || Boolean(selectedRasterTooLarge)}
-          canEditRaster={Boolean(selected?.type === "raster" && selectedEditable)}
-          canUseAi={canUseAi}
+          perspectiveLabel={perspectiveCopy[locale].title} brushBlocker={pixelTooLargeReason}
+          rasterToolBlocker={rasterToolBlocker} magicWandBlocker={rasterToolBlocker}
+          selectionToolBlocker={reason(!selected ? "noLayer" : !["raster", "paint", "annotation"].includes(selected.type) ? "selectionUnsupported" : selectedBlocker)}
+          rasterEditBlocker={reason(rasterBlocker)} aiBlocker={aiBlocker}
           onActivate={(next) => { invokeEditorCommand(commands, `tool.${next}`); }} onShapeChange={setShapeTool} onPickColor={() => { invokeEditorCommand(commands, "tool.eyedropper"); }}
           onOpenRasterEditor={openRasterEditor} onOpenAi={() => { invokeEditorCommand(commands, "filter.ai"); }} />
         <section className="canvas-column">
@@ -773,8 +783,8 @@ export function Studio(): JSX.Element {
             <button onClick={() => fitView()}>{t("fit")}</button>
             <button onClick={actualSize}>{t("reset")}</button>
             <span className="toolbar-spacer" />
-            <button disabled={!history.canUndo} onClick={undoDocument}>{t("undo")}</button>
-            <button disabled={!history.canRedo} onClick={redoDocument}>{t("redo")}</button>
+            <button disabled={!history.canUndo} title={hintTitle(t("undo"), history.canUndo ? null : reasonCopy.nothingToUndo)} onClick={undoDocument}>{t("undo")}</button>
+            <button disabled={!history.canRedo} title={hintTitle(t("redo"), history.canRedo ? null : reasonCopy.nothingToRedo)} onClick={redoDocument}>{t("redo")}</button>
           </div>
         </section>
         <Inspector locale={locale} activeTab={inspectorTab} layerCount={document.layers.length} t={t} onTabChange={setInspectorTab}
@@ -790,7 +800,7 @@ export function Studio(): JSX.Element {
               disabled={!selectedEditable || pixelSelection?.layerId === selected.id}
               onChange={(transform, mergeKey) => commitLayerTransform(selected.id, transform, mergeKey)} />}
             {selected && selected.type !== "mask" && !selected.rasterMaskId && <div className="tool-parameters">
-              <button disabled={!selectedEditable} onClick={addMaskToSelectedLayer}>{t("addLayerMask")}</button>
+              <button disabled={!selectedEditable} title={hintTitle(t("addLayerMask"), reason(selectedBlocker))} onClick={addMaskToSelectedLayer}>{t("addLayerMask")}</button>
             </div>}
             {tool !== "select" && tool !== "hand" && <div className="color-parameters">
               <ColorWheel value={paintColor} label={t("colorWheel")} onChange={changePaintColor} />
@@ -844,11 +854,18 @@ export function Studio(): JSX.Element {
             {pixelSelection && <div className="selection-controls">
               <span>{t("selectionReady")}</span>
 
-              <button disabled={!selected || !selectedEditable || selectedRasterTooLarge || selected.type !== "raster" || selected.id !== pixelSelection.layerId}
-                onClick={clearPixelSelection}>{t("clearSelectedPixels")}</button>
-              <button disabled={!selected || selected.id !== pixelSelection.layerId || (selected.type === "raster"
-                ? !selectedEditable || selectedRasterTooLarge : !canLiftVectorSelection)}
-                onClick={selected?.type === "raster" ? liftPixelSelection : liftVectorSelection}>{t("liftSelectedPixels")}</button>
+              {(() => {
+                const onOtherLayer = selected && selected.id !== pixelSelection.layerId ? reasonCopy.selectionOnOtherLayer : null;
+                const clearBlocker = onOtherLayer ?? rasterToolBlocker;
+                const liftBlocker = !selected ? reasonCopy.noLayer : onOtherLayer ?? (selected.type === "raster" ? rasterToolBlocker
+                  : reason(selectedBlocker) ?? (canLiftVectorSelection ? null : reasonCopy.nothingToLift));
+                return <>
+                  <button disabled={Boolean(clearBlocker)} title={hintTitle(t("clearSelectedPixels"), clearBlocker)}
+                    onClick={clearPixelSelection}>{t("clearSelectedPixels")}</button>
+                  <button disabled={Boolean(liftBlocker)} title={hintTitle(t("liftSelectedPixels"), liftBlocker)}
+                    onClick={selected?.type === "raster" ? liftPixelSelection : liftVectorSelection}>{t("liftSelectedPixels")}</button>
+                </>;
+              })()}
               <button onClick={invertPixelSelection}>{t("invertSelection")}</button>
               <button onClick={() => setPixelSelection(null)}>{t("clearSelection")}</button>
             </div>}

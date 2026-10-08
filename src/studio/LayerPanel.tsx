@@ -15,6 +15,7 @@ import { LayerStateToggles } from "./LayerStateToggles";
 import { AdjustmentMenu } from "./AdjustmentMenu";
 import { ADJUSTMENT_KIND_LABELS } from "./AdjustmentPanel";
 import { NewLayerMenu } from "./NewLayerMenu";
+import { disabledReasonCopy, hintTitle } from "./disabledReasons";
 
 type Commit = (recipe: (current: ImageStudioDocument) => ImageStudioDocument, label: string, mergeKey?: string) => void;
 
@@ -51,10 +52,14 @@ export function LayerPanel(props: Props): JSX.Element {
 
   const layoutIds = multiSelectedIds.length ? multiSelectedIds : selected ? [selected.id] : [];
   const copy = editingCopy[locale];
+  const reasons = disabledReasonCopy[locale];
   const layoutLayers = document.layers.filter(layer => layoutIds.includes(layer.id));
   const canAlign = layoutLayers.length > 0 && layoutLayers.every(layer => layerIsEditable(document.layers, layer.id)
     && layer.type !== "mask" && layer.type !== "adjustment" && (layer.parentId ?? null) === (layoutLayers[0].parentId ?? null))
     && (layoutLayers.length > 1 || !layoutLayers[0].parentId);
+  const alignBlocker = !layoutLayers.length ? reasons.noLayer : canAlign ? null : reasons.alignUnsupported;
+  const distributeBlocker = alignBlocker ?? (layoutIds.length < 3 ? reasons.distributeNeedsThree : null);
+  const selectedBlocker = selected ? null : reasons.noLayer;
   return <>
     {selected ? <div className="layer-controls">
       <label className="layer-name-field">{t("name")}<input value={selected.name} onChange={(event) => commit((current) => patchLayer(current, selected.id, { name: event.target.value }), "Rename layer", `name:${selected.id}`)} /></label>
@@ -66,8 +71,8 @@ export function LayerPanel(props: Props): JSX.Element {
         onLockChange={() => commit((current) => patchLayer(current, selected.id, { locked: !selected.locked }), "Toggle lock")} /></div>
     </div> : <p className="panel-empty">{t("noSelection")}</p>}
     <div className="layer-alignment" role="toolbar" aria-label={copy.align}>
-      {(["left", "center", "right", "top", "middle", "bottom", "horizontal", "vertical"] as Alignment[]).map(mode => <button key={mode} disabled={!canAlign || (mode === "horizontal" || mode === "vertical") && layoutIds.length < 3}
-        onClick={() => commit(current => alignLayers(current, layoutIds, mode), `Align layers ${mode}`)}>{copy[mode]}</button>)}
+      {(["left", "center", "right", "top", "middle", "bottom", "horizontal", "vertical"] as Alignment[]).map(mode => { const blocker = mode === "horizontal" || mode === "vertical" ? distributeBlocker : alignBlocker; return <button key={mode} disabled={Boolean(blocker)}
+        title={hintTitle(copy[mode], blocker)} onClick={() => commit(current => alignLayers(current, layoutIds, mode), `Align layers ${mode}`)}>{copy[mode]}</button>; })}
     </div>
     <div className="layer-list">{displayLayers.map(({ layer, depth }) => {
       const groupedWithSelection = multiSelectedIds.length >= 2 && multiSelectedIds.includes(layer.id);
@@ -94,19 +99,19 @@ export function LayerPanel(props: Props): JSX.Element {
           <button disabled={!planLayerMerge(document, layer.id, 1)} title={LAYER_UI[locale].mergeHelp} onClick={() => props.onMergeLayer(layer.id, 1)}>{LAYER_UI[locale].mergeUp}</button>
           <button disabled={!planLayerMerge(document, layer.id, -1)} title={LAYER_UI[locale].mergeHelp} onClick={() => props.onMergeLayer(layer.id, -1)}>{LAYER_UI[locale].mergeDown}</button>
           <button disabled={groupDisabled} title={LAYER_UI[locale].groupHelp} onClick={() => commit((current) => { if (groupedWithSelection) { const grouped = groupLayers(current, multiSelectedIds, LAYER_UI[locale].groupName); if (grouped !== current) setMultiSelectedIds([]); return grouped; } const siblings = current.layers.filter((candidate) => (candidate.parentId ?? null) === (layer.parentId ?? null)); const index = siblings.findIndex((candidate) => candidate.id === layer.id); const neighbor = siblings[index - 1] ?? siblings[index + 1]; return neighbor ? groupLayers(current, [neighbor.id, layer.id], LAYER_UI[locale].groupName) : current; }, "Group layers")}>{LAYER_UI[locale].group}</button>
-          <button disabled={!canUngroupLayer(document, layer.id)} onClick={() => commit((current) => ungroupLayer(current, layer.id), "Ungroup layers")}>{LAYER_UI[locale].ungroup}</button>
-          <button className="danger" disabled={layer.locked} onClick={() => commit((current) => deleteLayer(current, layer.id), "Delete layer")}>{t("remove")}</button>
+          <button disabled={!canUngroupLayer(document, layer.id)} title={canUngroupLayer(document, layer.id) ? undefined : hintTitle(LAYER_UI[locale].ungroup, layer.locked ? reasons.layerLocked : reasons.notGrouped)} onClick={() => commit((current) => ungroupLayer(current, layer.id), "Ungroup layers")}>{LAYER_UI[locale].ungroup}</button>
+          <button className="danger" disabled={layer.locked} title={layer.locked ? hintTitle(t("remove"), reasons.layerLocked) : undefined} onClick={() => commit((current) => deleteLayer(current, layer.id), "Delete layer")}>{t("remove")}</button>
         </div></details>
       </div>;
     })}</div>
     <div className="layer-actions" role="toolbar" aria-label={t("layerActions")}>
-      <NewLayerMenu disabled={!document.layers.length} label={t("newLayer")} paintLabel={t("newPaintLayer")} maskLabel={t("newMaskLayer")}
+      <NewLayerMenu disabled={!document.layers.length} disabledReason={reasons.noDocument} label={t("newLayer")} paintLabel={t("newPaintLayer")} maskLabel={t("newMaskLayer")}
         onCreatePaint={props.onAddPaint} onCreateMask={props.onAddMask} />
-      <AdjustmentMenu disabled={!document.layers.length} label={t("adjustLayer")} labels={ADJUSTMENT_KIND_LABELS[locale]} onSelect={props.onCreateAdjustment} />
-      <button disabled={!selected} title={t("duplicate")} aria-label={t("duplicate")} onClick={props.onDuplicate}><ProductIcon name="duplicate" /></button>
-      <button disabled={!selected} title={t("up")} aria-label={t("up")} onClick={() => props.onMove(1)}><ProductIcon name="layer-up" /></button>
-      <button disabled={!selected} title={t("down")} aria-label={t("down")} onClick={() => props.onMove(-1)}><ProductIcon name="layer-down" /></button>
-      <button className="danger" disabled={!selected || selected.locked} title={t("remove")} aria-label={t("remove")} onClick={props.onRemove}><ProductIcon name="trash" /></button>
+      <AdjustmentMenu disabled={!document.layers.length} disabledReason={reasons.noDocument} label={t("adjustLayer")} labels={ADJUSTMENT_KIND_LABELS[locale]} onSelect={props.onCreateAdjustment} />
+      <button disabled={!selected} title={hintTitle(t("duplicate"), selectedBlocker)} aria-label={t("duplicate")} onClick={props.onDuplicate}><ProductIcon name="duplicate" /></button>
+      <button disabled={!selected} title={hintTitle(t("up"), selectedBlocker)} aria-label={t("up")} onClick={() => props.onMove(1)}><ProductIcon name="layer-up" /></button>
+      <button disabled={!selected} title={hintTitle(t("down"), selectedBlocker)} aria-label={t("down")} onClick={() => props.onMove(-1)}><ProductIcon name="layer-down" /></button>
+      <button className="danger" disabled={!selected || selected.locked} title={hintTitle(t("remove"), selectedBlocker ?? (selected?.locked ? reasons.layerLocked : null))} aria-label={t("remove")} onClick={props.onRemove}><ProductIcon name="trash" /></button>
     </div>
   </>;
 }

@@ -13,7 +13,8 @@ import { fetchImageModes, IMAGE_STUDIO_AI_OUTPUT_FORMAT, type ImageMode } from "
 import { createAiRunGateway, modeManifestUrl } from "./gatewayForMode";
 import type { AiOperation } from "./types";
 import { completeImageStudioAiOperation } from "../projects/projectClient";
-import type { MessageKey } from "../i18n";
+import type { Locale, MessageKey } from "../i18n";
+import { disabledReasonCopy, hintTitle } from "../studio/disabledReasons";
 import { trapDialogFocus } from "../studio/dialogFocus";
 
 interface Props {
@@ -59,6 +60,11 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
   const canResume = selectedMode ? isRecoverableOperation(operation, selectedMode.id) : false;
   const resumingRun = canResume && Boolean(operation?.runId);
   const needsMask = selectedMode?.maskRequired && !resumingRun;
+  const runBlocker = !selectedMode ? t(loading ? "loadingModels" : "noModes")
+    : selectedMode.enabled === false && !resumingRun ? copy.unavailable
+    : result ? (disabledReasonCopy[language as Locale] ?? disabledReasonCopy.en).resultPending
+    : needsMask && (!hasMaskInput || maskLoading || maskError) ? maskError || t("aiMaskRequired") : null;
+  const runLabel = canResume ? t("resume") : operation ? t("retry") : t("run");
 
   useEffect(() => {
     if (selectedMode?.id !== "object_remove") return;
@@ -160,7 +166,7 @@ export function AiEditDialog({ layer, pixelSelection, maskLayer, maskInverted, m
         {result && !operation?.resultLayerId && <button disabled={busy} onClick={() => { setResult(null); setOperation(null); setError(""); }}>{copy.adjust}</button>}
         {result && <button className="primary" disabled={busy} onClick={() => void applyResult()}>{copy.apply}</button>}
         {busy && controllerRef.current ? <button className="danger" onClick={() => controllerRef.current?.abort()}>{t("stopWaiting")}</button>
-          : <button className="primary" disabled={!selectedMode || (selectedMode.enabled === false && !resumingRun) || Boolean(result) || Boolean(needsMask && (!hasMaskInput || maskLoading || maskError))} onClick={() => void run()}>{canResume ? t("resume") : operation ? t("retry") : t("run")}</button>}
+          : <button className="primary" disabled={Boolean(runBlocker)} title={hintTitle(runLabel, runBlocker)} onClick={() => void run()}>{runLabel}</button>}
       </header>
       <nav>
         {modes.map((mode) => <button key={mode.id} className={mode.id === modeId ? "active" : ""} disabled={busy || Boolean(result)} aria-pressed={mode.id === modeId} onClick={() => changeMode(mode.id)}><strong>{isAiEditorMode(mode.id) ? copy[mode.id][0] : mode.label}</strong></button>)}

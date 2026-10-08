@@ -18,6 +18,7 @@ import { ADJUSTMENT_KIND_LABELS, PANEL_LABELS, CONTROL_LABELS, COLOR_RANGE_LABEL
 import { quickTransformCopy, selectionCommandCopy, workbenchCopy } from "./workbenchCopy";
 
 import { editingCopy } from "./editingCopy";
+import { disabledReasonCopy } from "./disabledReasons";
 
 export const IMAGE_STUDIO_LOCALE_CATALOGS: Record<string, Record<string, Record<string, string>>> = {
   selectionRefinement: selectionRefinementCopy,
@@ -25,6 +26,7 @@ export const IMAGE_STUDIO_LOCALE_CATALOGS: Record<string, Record<string, Record<
   paths: pathCopy,
   filters: filterCopy,
   editing: editingCopy,
+  disabledReason: disabledReasonCopy,
   core: CORE_LABELS,
   property: PROPERTY_LABELS,
   tool: TOOL_LABELS,

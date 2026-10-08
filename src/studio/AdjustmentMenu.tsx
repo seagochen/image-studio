@@ -2,9 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactM
 import { createPortal } from "react-dom";
 import { ADJUSTMENT_KINDS, type AdjustmentKind } from "../domain/document";
 import { ProductIcon } from "./ProductIcon";
+import { hintTitle } from "./disabledReasons";
 
 interface Props {
   disabled: boolean;
+  /** Shown in the tooltip while the trigger is disabled. */
+  disabledReason?: string;
   label: string;
   labels: Record<AdjustmentKind, string>;
   onSelect: (kind: AdjustmentKind) => void;
@@ -16,7 +19,7 @@ const VIEWPORT_GAP = 8;
 const ANCHOR_GAP = 6;
 
 /** Creates a non-destructive adjustment layer from the layer panel. */
-export function AdjustmentMenu({ disabled, label, labels, onSelect }: Props): JSX.Element {
+export function AdjustmentMenu({ disabled, disabledReason, label, labels, onSelect }: Props): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -67,7 +70,7 @@ export function AdjustmentMenu({ disabled, label, labels, onSelect }: Props): JS
   };
 
   return <div className="layer-create-menu">
-    <button ref={triggerRef} type="button" className="layer-create-trigger" disabled={disabled} title={label} aria-label={label}
+    <button ref={triggerRef} type="button" className="layer-create-trigger" disabled={disabled} title={hintTitle(label, disabled ? disabledReason : null)} aria-label={label}
       aria-haspopup="menu" aria-expanded={open} onClick={toggle}><ProductIcon name="adjust" /></button>
     {open && createPortal(<div ref={menuRef} className="layer-create-popover" role="menu" aria-label={label}
       style={position ? { left: position.left, top: position.top } : { visibility: "hidden" }}>

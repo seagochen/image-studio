@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
 import type { MessageKey } from "../i18n";
 import { ProductIcon } from "./ProductIcon";
+import { hintTitle } from "./disabledReasons";
 import {
   BASIC_DRAWING_TOOLS, NAVIGATION_TOOLS, SECONDARY_TOOLS, SELECTION_TOOLS,
   SHAPE_ICONS, TOOL_ICONS, type ShapeTool, type Tool,
@@ -13,12 +14,13 @@ interface ToolRailProps {
   toolLabel: (tool: Tool) => string;
   t: (key: MessageKey) => string;
   perspectiveLabel: string;
-  rasterToolDisabled: boolean;
-  selectionToolDisabled: boolean;
-  magicWandDisabled: boolean;
-  oversizedRaster: boolean;
-  canEditRaster: boolean;
-  canUseAi: boolean;
+  /** Each blocker is the localized reason its tools are disabled, or null when they are usable. */
+  brushBlocker: string | null;
+  rasterToolBlocker: string | null;
+  selectionToolBlocker: string | null;
+  magicWandBlocker: string | null;
+  rasterEditBlocker: string | null;
+  aiBlocker: string | null;
   onActivate: (tool: Tool) => void;
   onShapeChange: (shape: ShapeTool) => void;
   onPickColor: () => void;
@@ -29,25 +31,25 @@ interface ToolRailProps {
 /** Owns the complete direct-tool presentation while Studio retains command orchestration. */
 export function ToolRail(props: ToolRailProps): JSX.Element {
   const {
-    tool, shapeTool, labels, toolLabel, t, perspectiveLabel, rasterToolDisabled, selectionToolDisabled, magicWandDisabled,
-    oversizedRaster, canEditRaster, canUseAi, onActivate, onShapeChange,
+    tool, shapeTool, labels, toolLabel, t, perspectiveLabel, brushBlocker, rasterToolBlocker, selectionToolBlocker, magicWandBlocker,
+    rasterEditBlocker, aiBlocker, onActivate, onShapeChange,
     onPickColor, onOpenRasterEditor, onOpenAi,
   } = props;
   const closeMenu = (event: MouseEvent<HTMLButtonElement>) => event.currentTarget.closest("details")?.removeAttribute("open");
   return <nav className="studio-toolrail" aria-label={t("tools")}
     onScroll={(event) => event.currentTarget.querySelectorAll("details[open]").forEach((menu) => menu.removeAttribute("open"))}>
     {NAVIGATION_TOOLS.map((name) => <ToolButton key={name} name={name} active={tool === name} label={toolLabel(name)}
-      disabled={(name === "brush" || name === "eraser") && oversizedRaster} onClick={() => onActivate(name)} />)}
+      blocker={name === "brush" || name === "eraser" ? brushBlocker : null} onClick={() => onActivate(name)} />)}
     <details className="toolrail-menu selection-menu" onToggle={positionToolMenu}>
       <summary className={SELECTION_TOOLS.includes(tool) ? "active" : ""} aria-label={labels.selection} title={labels.selection}>
         <ProductIcon name={SELECTION_TOOLS.includes(tool) ? TOOL_ICONS[tool] : TOOL_ICONS.marquee} />
       </summary>
-      <div>{SELECTION_TOOLS.map((name) => <button key={name} className={tool === name ? "active" : ""}
-        aria-label={toolLabel(name)} title={toolLabel(name)} disabled={name === "magicWand" ? magicWandDisabled : selectionToolDisabled}
-        onClick={(event) => { onActivate(name); closeMenu(event); }}><ProductIcon name={TOOL_ICONS[name]} /></button>)}</div>
+      <div>{SELECTION_TOOLS.map((name) => { const blocker = name === "magicWand" ? magicWandBlocker : selectionToolBlocker; return <button key={name} className={tool === name ? "active" : ""}
+        aria-label={toolLabel(name)} title={hintTitle(toolLabel(name), blocker)} disabled={Boolean(blocker)}
+        onClick={(event) => { onActivate(name); closeMenu(event); }}><ProductIcon name={TOOL_ICONS[name]} /></button>; })}</div>
     </details>
     {BASIC_DRAWING_TOOLS.map((name) => <ToolButton key={name} name={name} active={tool === name} label={toolLabel(name)}
-      disabled={(name === "brush" || name === "eraser") && oversizedRaster}
+      blocker={name === "brush" || name === "eraser" ? brushBlocker : null}
       onClick={() => name === "eyedropper" ? onPickColor() : onActivate(name)} />)}
     <details className="toolrail-menu shape-menu" onToggle={positionToolMenu}>
       <summary className={tool === "shape" ? "active" : ""} aria-label={labels.shape} title={labels.shape}><ProductIcon name={TOOL_ICONS.shape} /></summary>
@@ -57,22 +59,22 @@ export function ToolRail(props: ToolRailProps): JSX.Element {
       </button>)}</div>
     </details>
     {SECONDARY_TOOLS.map((name) => <ToolButton key={name} name={name} active={tool === name} label={toolLabel(name)}
-      disabled={rasterToolDisabled} onClick={() => onActivate(name)} />)}
+      blocker={rasterToolBlocker} onClick={() => onActivate(name)} />)}
     <div className="toolrail-divider" role="separator" aria-label={labels.advanced} />
-    <AdvancedButton label={t("adjust")} icon="adjust" disabled={!canEditRaster} onClick={() => onOpenRasterEditor("Adjust")} />
-    <AdvancedButton label={t("filters")} icon="filter" disabled={!canEditRaster} onClick={() => onOpenRasterEditor("Filters")} />
-    <AdvancedButton label={perspectiveLabel} icon="perspective" disabled={!canEditRaster} onClick={() => onOpenRasterEditor("Perspective")} />
-    <AdvancedButton label={t("aiEdit")} icon="sparkle" disabled={!canUseAi} onClick={onOpenAi} />
+    <AdvancedButton label={t("adjust")} icon="adjust" blocker={rasterEditBlocker} onClick={() => onOpenRasterEditor("Adjust")} />
+    <AdvancedButton label={t("filters")} icon="filter" blocker={rasterEditBlocker} onClick={() => onOpenRasterEditor("Filters")} />
+    <AdvancedButton label={perspectiveLabel} icon="perspective" blocker={rasterEditBlocker} onClick={() => onOpenRasterEditor("Perspective")} />
+    <AdvancedButton label={t("aiEdit")} icon="sparkle" blocker={aiBlocker} onClick={onOpenAi} />
   </nav>;
 }
 
-function ToolButton({ name, active, label, disabled, onClick }: { name: Tool; active: boolean; label: string; disabled: boolean; onClick: () => void }): JSX.Element {
-  return <button className={`tool-nav-button ${active ? "active" : ""}`} aria-label={label} title={label}
-    aria-pressed={active} disabled={disabled} onClick={onClick}><ProductIcon name={TOOL_ICONS[name]} /></button>;
+function ToolButton({ name, active, label, blocker, onClick }: { name: Tool; active: boolean; label: string; blocker: string | null; onClick: () => void }): JSX.Element {
+  return <button className={`tool-nav-button ${active ? "active" : ""}`} aria-label={label} title={hintTitle(label, blocker)}
+    aria-pressed={active} disabled={Boolean(blocker)} onClick={onClick}><ProductIcon name={TOOL_ICONS[name]} /></button>;
 }
 
-function AdvancedButton({ label, icon, disabled, onClick }: { label: string; icon: "adjust" | "filter" | "perspective" | "sparkle"; disabled: boolean; onClick: () => void }): JSX.Element {
-  return <button className="tool-nav-button" aria-label={label} title={label} disabled={disabled} onClick={onClick}><ProductIcon name={icon} /></button>;
+function AdvancedButton({ label, icon, blocker, onClick }: { label: string; icon: "adjust" | "filter" | "perspective" | "sparkle"; blocker: string | null; onClick: () => void }): JSX.Element {
+  return <button className="tool-nav-button" aria-label={label} title={hintTitle(label, blocker)} disabled={Boolean(blocker)} onClick={onClick}><ProductIcon name={icon} /></button>;
 }
 
 function positionToolMenu(event: { currentTarget: HTMLDetailsElement }): void {
