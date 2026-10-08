@@ -1,7 +1,18 @@
-dist/
+# Dependencies
 node_modules/
-.env
+
+# Build output
+dist/
+release/
+
+# Runtime data
 data/
+
+# Environment and secrets
+.env
 secrets/*
 !secrets/.gitkeep
-release/
+
+# AI assistant local config
+.claude/
+.codex/
