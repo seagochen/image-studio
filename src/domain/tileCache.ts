@@ -110,38 +110,79 @@ export class TileCache {
 
 /** A minimal OPFS adapter. Failure is intentionally non-fatal: its data is disposable. */
 export class OpfsTileStore implements PersistentTileStore {
-  private constructor(private readonly directory: OpfsDirectory) {}
+  private constructor(private readonly directory: OpfsDirectory, private readonly directoryName: string,
+    private readonly maxBytes?: number) {}
 
-  static async open(directoryName = "skillsmaster-image-studio-tiles"): Promise<OpfsTileStore | null> {
+  static async open(directoryName = "skillsmaster-image-studio-tiles", maxBytes?: number): Promise<OpfsTileStore | null> {
+    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error("Invalid persistent tile budget");
+    // Budgeted caches require a cross-tab lock. Without one, use memory previews.
+    if (maxBytes !== undefined && !navigator.locks?.request) return null;
     const storage = (navigator as Navigator & { storage?: { getDirectory?: () => Promise<OpfsDirectory> } }).storage;
     if (!storage?.getDirectory) return null;
     const root = await storage.getDirectory() as unknown as OpfsDirectory;
-    return new OpfsTileStore(await root.getDirectoryHandle(directoryName, { create: true }));
+    const store = new OpfsTileStore(await root.getDirectoryHandle(directoryName, { create: true }), directoryName, maxBytes);
+    await store.exclusive(() => store.makeRoom(0));
+    return store;
   }
 
   async get(key: string): Promise<Uint8Array | null> {
-    try {
-      const handle = await this.directory.getFileHandle(filename(key));
-      return new Uint8Array(await (await handle.getFile()).arrayBuffer());
-    } catch (error) {
-      if (isNotFound(error)) return null;
-      throw error;
-    }
+    return this.exclusive(async () => {
+      try {
+        const handle = await this.directory.getFileHandle(filename(key));
+        return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    });
   }
 
   async put(key: string, value: Uint8Array): Promise<void> {
-    const writable = await (await this.directory.getFileHandle(filename(key), { create: true })).createWritable();
-    try { await writable.write(value); await writable.close(); }
-    catch (error) { await writable.abort?.(); throw error; }
+    const bytes = copy(value);
+    await this.exclusive(async () => {
+      const name = filename(key);
+      if (this.maxBytes !== undefined && bytes.byteLength > this.maxBytes) return;
+      await this.makeRoom(bytes.byteLength, name);
+      const writable = await (await this.directory.getFileHandle(name, { create: true })).createWritable();
+      try { await writable.write(bytes); await writable.close(); }
+      catch (error) { await writable.abort?.(); throw error; }
+    });
   }
 
   async delete(key: string): Promise<void> {
-    try { await this.directory.removeEntry(filename(key)); }
-    catch (error) { if (!isNotFound(error)) throw error; }
+    await this.exclusive(async () => {
+      try { await this.directory.removeEntry(filename(key)); }
+      catch (error) { if (!isNotFound(error)) throw error; }
+    });
   }
 
   async clear(): Promise<void> {
-    for await (const name of this.directory.keys()) await this.directory.removeEntry(name);
+    await this.exclusive(async () => {
+      for await (const name of this.directory.keys()) await this.directory.removeEntry(name);
+    });
+  }
+
+  private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.maxBytes === undefined ? await operation()
+      : await navigator.locks.request(`image-studio-opfs:${this.directoryName}`, operation);
+  }
+
+  /** File metadata survives reloads; prune oldest writes before allocating another tile. */
+  private async makeRoom(incomingBytes: number, replacing?: string): Promise<void> {
+    if (this.maxBytes === undefined) return;
+    const entries: { name: string; bytes: number; modified: number }[] = [];
+    for await (const name of this.directory.keys()) {
+      const file = await (await this.directory.getFileHandle(name)).getFile();
+      entries.push({ name, bytes: file.size, modified: file.lastModified });
+    }
+    let bytes = entries.reduce((sum, entry) => sum + entry.bytes, incomingBytes);
+    // Remove the replaced file first: retaining its old bytes while writing can exceed the budget.
+    entries.sort((a, b) => a.name === replacing ? -1 : b.name === replacing ? 1 : a.modified - b.modified || a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (entry.name !== replacing && bytes <= this.maxBytes) break;
+      await this.directory.removeEntry(entry.name);
+      bytes -= entry.bytes;
+    }
   }
 }
 
@@ -153,7 +194,7 @@ export function serializeTileCacheKey(key: TileCacheKey): string {
   return JSON.stringify([key.documentId, key.documentVersion, key.nodeId, key.scale, key.colorModel, key.x, key.y]);
 }
 
-interface OpfsFile { arrayBuffer(): Promise<ArrayBuffer> }
+interface OpfsFile { size: number; lastModified: number; arrayBuffer(): Promise<ArrayBuffer> }
 interface OpfsFileHandle { getFile(): Promise<OpfsFile>; createWritable(): Promise<OpfsWritable> }
 interface OpfsWritable { write(value: Uint8Array): Promise<void>; close(): Promise<void>; abort?(): Promise<void> }
 interface OpfsDirectory {

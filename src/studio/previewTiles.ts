@@ -3,6 +3,7 @@ import { OpfsTileStore, TileCache, type TileCacheKey } from "../domain/tileCache
 
 export const PREVIEW_TILE_EDGE = 256;
 const PREVIEW_MEMORY_BUDGET = 24 * 1024 * 1024;
+export const PREVIEW_PERSISTENT_BUDGET = 64 * 1024 * 1024;
 let cachePromise: Promise<TileCache> | null = null;
 
 export interface PreviewTile { x: number; y: number; width: number; height: number }
@@ -72,9 +73,8 @@ export async function storePreviewTiles(document: ImageStudioDocument, scale: nu
 
 /** Clears only derived previews; saved projects, assets and drafts are untouched. */
 export async function clearPreviewTileCache(): Promise<void> {
-  const current = cachePromise;
-  cachePromise = null;
-  if (current) await (await current).clear();
+  // Keep one cache instance so writes already in flight share the same directory lock.
+  await (await previewTileCache()).clear();
 }
 
 export interface PreviewStorageStatus { memoryBytes: number; memoryEntries: number; persistentAvailable: boolean; persistentError: boolean; usage?: number; quota?: number }
@@ -99,7 +99,8 @@ function tileKey(document: ImageStudioDocument, version: string, scale: number, 
 }
 
 async function previewTileCache(): Promise<TileCache> {
-  if (!cachePromise) cachePromise = OpfsTileStore.open().catch(() => null).then((persistent) => new TileCache(PREVIEW_MEMORY_BUDGET, persistent ?? undefined));
+  if (!cachePromise) cachePromise = OpfsTileStore.open("skillsmaster-image-studio-tiles", PREVIEW_PERSISTENT_BUDGET)
+    .catch(() => null).then((persistent) => new TileCache(PREVIEW_MEMORY_BUDGET, persistent ?? undefined));
   return cachePromise;
 }
 

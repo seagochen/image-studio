@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Image Studio persistent preview budget</title>
+<pre id="result">running</pre>
+<script type="module">
+  import { OpfsTileStore } from "../../src/domain/tileCache.ts";
+  const result = document.getElementById("result"), name = `image-studio-cache-test-${crypto.randomUUID()}`;
+  try {
+    const budget = 128;
+    const first = await OpfsTileStore.open(name, budget), second = await OpfsTileStore.open(name, budget);
+    if (!first || !second) throw new Error("OPFS/Web Locks are unavailable");
+    const root = await navigator.storage.getDirectory(), directory = await root.getDirectoryHandle(name);
+    const bytes = async () => {
+      let total = 0;
+      for await (const handle of directory.values()) total += (await handle.getFile()).size;
+      return total;
+    };
+    const sizes = [];
+    for (let version = 0; version < 10; version++) {
+      await first.put(`v${version}`, new Uint8Array(64).fill(version));
+      sizes.push(await bytes());
+      if (sizes.at(-1) > budget) throw new Error("Persistent budget exceeded");
+    }
+    const reopened = await OpfsTileStore.open(name, budget);
+    if (await reopened.get("v0") !== null || (await reopened.get("v9"))?.[0] !== 9) throw new Error("Reload/eviction failed");
+    await Promise.all([first.put("concurrent-a", new Uint8Array(96)), second.put("concurrent-b", new Uint8Array(96))]);
+    if (await bytes() > budget) throw new Error("Concurrent writes exceeded budget");
+    await Promise.all([first.put("before-clear", new Uint8Array(64)), second.clear(), first.put("after-clear", new Uint8Array(64))]);
+    if (await bytes() > budget || !(await reopened.get("after-clear"))) throw new Error("Concurrent clear failed");
+    result.textContent = JSON.stringify({ status: "passed", sizes, finalBytes: await bytes() });
+  } catch (error) { result.textContent = JSON.stringify({ status: "failed", error: error.message }); }
+  finally { await (await navigator.storage.getDirectory()).removeEntry(name, { recursive: true }).catch(() => undefined); }
+</script>
