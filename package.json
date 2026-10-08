@@ -12,6 +12,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.jest.json",
     "test": "npm run test:server && npm run test:web",
     "test:web": "jest",
     "test:server": "node --disable-warning=ExperimentalWarning --test server/__tests__/*.test.mjs",

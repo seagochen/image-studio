@@ -52,7 +52,9 @@ describe("layout commands", () => {
         const cropped = cropCanvas(linked, { x: 5, y: 6, width: 80, height: 70 });
         history.execute(linked, cropped, "Crop");
         expect(cropped.canvas).toEqual({ width: 80, height: 70 });
-        expect(cropped.layers[0].strokes).toBe(paint.strokes);
+        const croppedPaint = cropped.layers[0];
+        if (croppedPaint.type !== "paint") throw new Error("Expected paint layer");
+        expect(croppedPaint.strokes).toBe(paint.strokes);
         expect(cropped.layers[0].transform.x).toBe(5);
         expect(cropped.layers[1].transform).toEqual(cropped.layers[0].transform);
         expect(parseDocument(serializeDocument(cropped)).canvas).toEqual(cropped.canvas);
