@@ -601,3 +601,14 @@ button.primary .product-icon { --product-icon-color: var(--on-accent); --product
 
 .ai-mask-scroll { overflow: auto; max-height: 560px; min-height: 0; }
 .ai-mask-surface.ai-mask-detail { max-width: none; }
+.canvas-size-dialog { width: min(360px, 100%); display: grid; gap: 14px; padding: 18px; border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 24px 60px rgba(18,26,45,.32); }
+.canvas-size-dialog h2 { margin: 0; font-size: 16px; }
+.canvas-size-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.canvas-size-fields { display: grid; gap: 12px; font-size: 12px; }
+.canvas-size-fields .editor-number-grid label { display: grid; gap: 4px; }
+.canvas-size-fields .editor-check { display: flex; align-items: center; gap: 7px; }
+.canvas-anchor-grid { display: grid; grid-template-columns: repeat(3, 28px); gap: 4px; margin: 0; padding: 0; border: 0; }
+.canvas-anchor-grid legend { margin-bottom: 6px; padding: 0; }
+.canvas-anchor-grid button { width: 28px; height: 28px; min-height: 0; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-subtle); }
+.canvas-anchor-grid button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 4px var(--panel); }
+.canvas-size-help { margin: 0; color: var(--muted); line-height: 1.5; }

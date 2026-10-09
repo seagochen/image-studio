@@ -84,6 +84,6 @@ describe("Image Studio adjustment layer entry", () => {
   });
 
   it("blocks canvas shortcuts while the adjustment draft dialog is open", () => {
-    expect(studio).toContain("fileBusy || adjustmentDraft) return;");
+    expect(studio).toContain("fileBusy || adjustmentDraft || canvasSizeOpen) return;");
   });
 });

@@ -8,7 +8,8 @@ import { CanvasTextEditor } from "./CanvasTextEditor";
 import { SelectionRefinementPanel } from "./SelectionRefinementPanel";
 import { LayerEffectsPanel } from "./LayerEffectsPanel";
 import { CanvasCrop } from "./CanvasCrop";
-import { cropCanvas, snapLayer } from "../domain/layoutCommands";
+import { cropCanvas, resizeCanvas, snapLayer } from "../domain/layoutCommands";
+import { CanvasSizeDialog, canvasSizeCopy } from "./CanvasSizeDialog";
 import { editingCopy } from "./editingCopy";
 import { disabledReasonCopy, hintTitle, layerEditBlocker, type DisabledReason } from "./disabledReasons";
 import { copyLayer, pasteLayer } from "../domain/layerClipboard";
@@ -153,6 +154,7 @@ export function Studio(): JSX.Element {
   const [shortcutBindings, setShortcutBindings] = useState(loadShortcuts);
   const [adjustmentDraft, setAdjustmentDraft] = useState<{ layer: AdjustmentLayer; sourceLayerId: string | null; selection: PixelSelectionMask | null } | null>(null);
   const [cropOpen, setCropOpen] = useState(false);
+  const [canvasSizeOpen, setCanvasSizeOpen] = useState(false);
   const [gridEnabled, setGridEnabled] = useState(false);
   const [rulersEnabled, setRulersEnabled] = useState(false);
   const [gridSpacing, setGridSpacing] = useState(32);
@@ -431,7 +433,7 @@ export function Studio(): JSX.Element {
 
   useEffect(() => {
     const surface = surfaceRef.current;
-    if (!surface || pathEditing || cropOpen || historyBusy || paletteOpen || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft) return;
+    if (!surface || pathEditing || cropOpen || historyBusy || paletteOpen || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft || canvasSizeOpen) return;
     return bindConfiguredShortcuts(surface, shortcutBindings, (action) => {
       if (historyBusyRef.current) return;
       if (action === "undo") undoDocument();
@@ -450,7 +452,7 @@ export function Studio(): JSX.Element {
         setTool(action); setInspectorTab("properties");
       }
     });
-  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, pathEditing, cropOpen, historyBusy, paletteOpen, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
+  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, pathEditing, cropOpen, historyBusy, paletteOpen, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, canvasSizeOpen, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
 
   useEffect(() => {
     const closeMenusOutside = (event: MouseEvent) => {
@@ -517,7 +519,8 @@ export function Studio(): JSX.Element {
     try {
       const coverage = resolveRasterEditCoverage(document, selected, pixelSelection?.layerId === selected.id ? pixelSelection : null);
       if (mode === "Perspective" && coverage) { setError("editFailed"); return; }
-      setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name, coverage });
+      setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name,
+        canvasWidth: document.canvas.width, canvasHeight: document.canvas.height, coverage });
     } catch { setError("editFailed"); }
   };
   const reasonCopy = disabledReasonCopy[locale];
@@ -560,6 +563,7 @@ export function Studio(): JSX.Element {
       "filter.filters": { label: t("filters"), enabled: selected?.type === "raster" && selectedEditable, run: () => openRasterEditor("Filters") },
       "filter.perspective": { label: perspectiveCopy[locale].title, enabled: Boolean(selected?.type === "raster" && selectedEditable && !pixelSelection && !selected.rasterMaskId), run: () => openRasterEditor("Perspective") },
       "filter.ai": { label: t("aiEdit"), enabled: canUseAi, run: () => setAiOpen(true) },
+      "edit.canvasSize": { label: canvasSizeCopy[locale].title, enabled: true, run: () => setCanvasSizeOpen(true) },
       "view.grid": {label:layoutCopy[locale].grid,enabled:true,run:()=>setGridEnabled(value=>!value)},
       "view.rulers": {label:layoutCopy[locale].rulers,enabled:true,run:()=>setRulersEnabled(value=>!value)},
       "edit.path": {label:pathCopy[locale].pen,enabled:true,run:()=>{setTextEditing(null);setCropOpen(false);setPathEditing({mask:false});}},
@@ -568,7 +572,7 @@ export function Studio(): JSX.Element {
       "view.navigator": { label: t("navigator"), enabled: true, run: () => setNavigatorCollapsed((value) => !value) },
     },
   });
-  const modalOpen = aiOpen || deliveryOpen || Boolean(editorInput) || settingsOpen || apiKeyOpen || Boolean(adjustmentDraft);
+  const modalOpen = aiOpen || deliveryOpen || Boolean(editorInput) || settingsOpen || apiKeyOpen || Boolean(adjustmentDraft) || canvasSizeOpen;
   useEffect(() => {
     if (modalOpen || fileBusy || pathEditing || cropOpen || historyBusy) return;
     const keydown = (event: KeyboardEvent) => {
@@ -700,7 +704,7 @@ export function Studio(): JSX.Element {
           onOpenRasterEditor={openRasterEditor} onOpenAi={() => { invokeEditorCommand(commands, "filter.ai"); }} />
         <section className="canvas-column">
           <WorkbenchBar title={document.title} width={document.canvas.width} height={document.canvas.height} locale={locale}
-            onCommands={() => setPaletteOpen(true)} onCrop={() => setCropOpen(true)} snap={snapEnabled} onSnap={() => setSnapEnabled(value => !value)} layoutControls={<>
+            onCommands={() => setPaletteOpen(true)} onCrop={() => setCropOpen(true)} onCanvasSize={() => setCanvasSizeOpen(true)} snap={snapEnabled} onSnap={() => setSnapEnabled(value => !value)} layoutControls={<>
               <button onClick={()=>{setTextEditing(null);setCropOpen(false);setPathEditing({mask:false});}}>{pathCopy[locale].pen}</button>
               <button aria-pressed={gridEnabled} onClick={()=>setGridEnabled(value=>!value)}>{layoutCopy[locale].grid}</button>
               <button aria-pressed={rulersEnabled} onClick={()=>setRulersEnabled(value=>!value)}>{layoutCopy[locale].rulers}</button>
@@ -936,7 +940,7 @@ export function Studio(): JSX.Element {
           setEditorInput(null);
           if (outcome.kind === "saved") {
             commit((current) => applyConventionalEditorOutcome(current, selected.id, outcome), "Apply conventional edit");
-            if (outcome.output.resizeCanvas) fitView({ width: outcome.output.width, height: outcome.output.height });
+            if (outcome.output.canvasResize) fitView(outcome.output.canvasResize);
           }
         }} />}
       {editorInput && editorTab === "Perspective" && selected?.type === "raster" && <PerspectiveDialog input={editorInput} language={locale} onComplete={(outcome) => {
@@ -977,6 +981,11 @@ export function Studio(): JSX.Element {
           setPixelSelection(null);
           refreshHistory((value) => value + 1);
           return outcome.resultLayerId;
+        }} />}
+      {canvasSizeOpen && <CanvasSizeDialog width={document.canvas.width} height={document.canvas.height} locale={locale} onClose={() => setCanvasSizeOpen(false)}
+        onApply={(value) => {
+          commit((current) => resizeCanvas(current, value), "Resize canvas");
+          setPixelSelection(null); setCanvasSizeOpen(false); fitView(value);
         }} />}
       {apiKeyOpen && <ApiKeySettingsDialog copy={fileCopy[locale]} onClose={() => setApiKeyOpen(false)} />}
       {settingsOpen && <ShortcutSettingsDialog bindings={shortcutBindings} copy={fileCopy[locale]}
