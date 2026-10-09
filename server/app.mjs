@@ -16,16 +16,17 @@ const CONTENT_TYPES = {
   ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm",
 };
 
-export function createHandler({ config, store = null, ai = null, log = () => {} }) {
+export function createHandler({ config, store = null, ai = null, accessControl = null, log = () => {} }) {
   const standalone = config.mode === "standalone";
   if (standalone && (!store || !ai)) throw new Error("Standalone mode requires a store and an AI adapter");
   const staticDir = config.server.staticDir;
-  const access = standalone ? createAccessControl(config.access) : null;
+  const access = standalone ? (accessControl ?? createAccessControl(config.access)) : null;
 
   return async function handle(req, res) {
     const started = Date.now();
     res.on("finish", () => log(`${req.method} ${safePath(req.url)} ${res.statusCode} ${Date.now() - started}ms`));
     setCommonHeaders(res);
+    if (config.privateResponses) res.setHeader("Referrer-Policy", "no-referrer");
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
       const pathname = url.pathname;
@@ -129,7 +130,8 @@ export function createHandler({ config, store = null, ai = null, log = () => {} 
     } else if (sub === "assets" && parts.length === 5) {
       if (method === "GET" || method === "HEAD") {
         const asset = store.readAsset(projectId, subId);
-        return sendFile(req, res, asset.path, asset.mimeType, { etag: `"${asset.sha256}"`, cache: "private, max-age=31536000, immutable" });
+        return sendFile(req, res, asset.path, asset.mimeType, { etag: `"${asset.sha256}"`,
+          cache: config.privateResponses ? "private, no-store" : "private, max-age=31536000, immutable" });
       }
       if (method === "DELETE") { store.deleteAsset(projectId, subId); return sendEmpty(res, 204); }
     } else if (sub === "operations" && parts.length === 5 && method === "PATCH") {

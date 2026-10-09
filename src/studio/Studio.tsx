@@ -85,7 +85,7 @@ import { ProductIcon, type ProductIconName } from "./ProductIcon";
 import { ToolRail } from "./ToolRail";
 import { Inspector, type InspectorTab } from "./Inspector";
 import { LayerPanel } from "./LayerPanel";
-import { APP_BASE_PATH, isStandaloneMode } from "../runtime/runtimeConfig";
+import { APP_BASE_PATH, isStandaloneMode, platformPage } from "../runtime/runtimeConfig";
 import { invokeEditorCommand } from "../domain/editorCommands";
 import { studioCommands } from "./studioCommands";
 import { CommandPalette } from "./CommandPalette";
@@ -625,7 +625,7 @@ export function Studio(): JSX.Element {
   return (
     <div className="studio-shell">
       <header className="studio-header">
-        <a className="studio-brand" href={standalone ? APP_BASE_PATH : "/dashboard"}>
+        <a className="studio-brand" href={standalone ? APP_BASE_PATH : platformPage("/dashboard")}>
           <ProductIcon name="image" className="brand-mark" />
           <span className="brand-label">{t("title")}</span>
         </a>
@@ -655,7 +655,7 @@ export function Studio(): JSX.Element {
           </button>
           {!standalone && <>
             <span className="header-divider" aria-hidden="true" />
-            <button className="ticket-button" aria-label={t("submitTicket")} title={t("submitTicket")} onClick={() => { window.location.href = "/account?view=issues&issueView=new"; }}>
+            <button className="ticket-button" aria-label={t("submitTicket")} title={t("submitTicket")} onClick={() => { window.location.href = platformPage("/account?view=issues&issueView=new"); }}>
               <ProductIcon name="ticket" />
               <span>{t("submitTicket")}</span>
             </button>
@@ -667,7 +667,7 @@ export function Studio(): JSX.Element {
               <option value="ja">日本語</option><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option>
             </select>
           </span>
-          {!standalone && <a className="button account-link" href="/account">
+          {!standalone && <a className="button account-link" href={platformPage("/account")}>
             <ProductIcon name="user" />
             <span className="account-label">{t("account")}</span>
           </a>}

@@ -7,6 +7,7 @@ Image Studio 是一个基于浏览器的分层图像编辑器（栅格 / 绘制 
 | --- | --- | --- | --- |
 | `standalone` 独立模式 | 本机 Docker 运行 | 静态页面、`/healthz`、本地项目 API、AI 代理 | 无需登录；SQLite + 存储目录（挂载卷）；可在“设置 → API Key”接入 skillsmaster.jp AI，Key 只保存在服务端 |
 | `platform` 平台挂载模式 | 由 skillsmaster 管理后台挂载到 `/apps/image-studio/*` | 仅静态资源、`/healthz`、`/runtime-config.json` | 沿用 skillsmaster 同源 Session / App Session 与平台项目、AI 接口 |
+| `hosted` 独立平台应用 | `imagestudio.apps.skillsmaster.jp` 等独立 origin | 应用自有项目、素材、AI 编排与身份交接 | 通过 REST 复用平台账号；按用户独立 SQLite 与素材目录；不持有平台长期 key |
 
 浏览器启动时读取 `/apps/image-studio/runtime-config.json` 决定模式；读取失败时直接报错，**不会**在两种模式之间自动回退。
 
@@ -241,3 +242,60 @@ docker-compose.yml, .env.example   独立模式的端口与卷映射
 粘贴生成独立的图片图层，保持选区位置。删除仅清除选区内容，无选区时操作整个图层。
 绘图和文字/形状图层的选区复制为图片，清除操作通过蒙版保留源对象的可编辑性。
 这些操作不读取或写入系统剪贴板。
+
+## 独立域名 hosted 模式
+
+`IMAGE_STUDIO_MODE=hosted` 使用自己的 HTTP 服务与持久存储，
+`IMAGE_STUDIO_PUBLIC_ORIGIN` 为应用 HTTPS origin（如 `https://imagestudio.apps.skillsmaster.jp`），
+`SKILLSMASTER_API_BASE_URL` 为平台账号和通用 AI REST origin（推荐规范网页登录主机
+`https://www.skillsmaster.jp`，以复用已登录的仅本主机 cookie），
+`IMAGE_STUDIO_DATA_DIR` 为应用自己的持久目录。也可使用 `config/hosted.example.json`；
+配置中两个 origin 必须不同，仅本地开发允许 loopback HTTP。不得挂载平台账号库、
+`business.sqlite`、其他应用目录或平台长期 API key。
+
+平台须预先登记应用的精确 `/auth/platform/callback` URL，并启用具有
+`platform.auth` / `platform.ai-runs` 权限的模块。网页使用 `/auth/platform/login`
+发起 state 与 S256 PKCE 登录交接，应用服务器兑换一次性 code，
+把短期身份放入仅本主机的 HttpOnly cookie；每次业务请求通过 REST 重新校验身份。
+HTTPS cookie 使用 `__Host-` 前缀，不设置 `Domain`；平台退出、停用、密码修改或过期
+使应用数据访问失效，平台暂不可用时拒绝业务访问，不使用缓存身份放行。
+
+项目、素材和 AI 操作保存在应用目录 `users/<用户身份摘要>/` 内，其他用户没有读取权限；
+AI 请求仅发送 scoped bearer 与通用任务字段，操作记录和结果恢复留在应用。
+旧 v14 项目缺少 `tagColor` 时由应用内部补充稳定默认颜色，不要求平台新增字段。
+主入口 `/` 和任意应用 SPA 路径由本服务处理，`/apps/image-studio/` 保留兼容入口。
+
+静态兼容制品继续使用 `module.json`；独立服务使用 `module.hosted.json`，不能直接把旧静态
+归档切成 hosted。上线前按[平台部署方案](https://github.com/jaisol-inc/skillsmaster/issues/218)
+冻结旧项目写入，排空在途任务，并转换、核对项目、素材与操作记录。
+
+### 旧项目转换与独立备份
+
+`server/importLegacy.mjs` 消费平台离线导出的应用专属 JSON 与素材文件，写入一个尚不存在的
+新数据根目录。导入保留有效项目 ID、文档版本/revision、资产引用与已完成 AI 操作，使用
+应用自己的文档校验；旧删除项目及其操作保存在逐用户 `legacy-records.json`，不会复活。
+有效项目尚未应用的成功结果与在途操作必须在冻结前处理；导入失败不发布半份数据。
+同一导出重放只返回原收据，不覆盖迁移后编辑；不同导出或已有非迁移目录拒绝覆盖。
+
+```bash
+node server/importLegacy.mjs /protected/export/image-studio /protected/new-image-data
+```
+
+`server/hostedBackup.mjs` 覆盖 hosted 全部用户，而旧 `backup.mjs` 仅覆盖 standalone。
+备份前停止整个应用并排空业务请求；`--quiesced` 是操作者对停写的声明，脚本不会替你停止
+服务。备份对每个用户库做 SQLite 稳定快照、完整性与外键检查、逐表数量核对，并记录所有
+文件摘要与大小。验证拒绝符号链接、未声明文件和摘要变化；恢复只写新的空目录。
+
+```bash
+IMAGE_STUDIO_MODE=hosted \
+WEB_APP_PUBLIC_ORIGIN=https://imagestudio.apps.skillsmaster.jp \
+SKILLSMASTER_API_BASE_URL=https://www.skillsmaster.jp \
+WEB_APP_DATA_DIR=/protected/new-image-data \
+node server/hostedBackup.mjs backup /protected/image-backup --quiesced
+node server/hostedBackup.mjs verify /protected/image-backup
+node server/hostedBackup.mjs restore /protected/image-backup /protected/restored-image-data
+```
+
+升级或回退前重新评估文档兼容，在另一空目录恢复并验证，保留现有数据与旧恢复点。
+Module Manager 的 root 策略须为精确候选镜像批准 `storagePreparedImageDigests`；只批准
+发布者签名不能开启尚未迁移的空持久卷。同模块版本不能并行写入同一应用卷。

@@ -1,12 +1,15 @@
 // Runtime configuration for the Image Studio container.
 //
-// The same image runs in one of two explicit modes:
+// The same image runs in one of three explicit modes:
 //   - "platform":   mounted by skillsmaster under /apps/image-studio/*. Serves static
 //                   assets, /healthz and /runtime-config.json only. Never opens a local
 //                   database, storage directory or AI key.
 //   - "standalone": serves the static app plus a local project API backed by SQLite and
 //                   a storage directory, and optionally proxies AI calls to skillsmaster
 //                   with a server-side customer key that the browser never sees.
+//
+//   - "hosted":     independent origin, REST identity, and per-user application storage.
+//                   Never holds a platform customer key or account database.
 //
 // The mode comes from the JSON file named by IMAGE_STUDIO_CONFIG. Without that variable
 // it comes from SKILLSMASTER_MODE, which the skillsmaster Module Manager injects into
@@ -17,11 +20,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const MODES = Object.freeze(["platform", "standalone"]);
+export const MODES = Object.freeze(["platform", "standalone", "hosted"]);
 
 const DEFAULTS = Object.freeze({
   platform: { port: 8080 },
   standalone: { port: 80 },
+  hosted: { port: 8080 },
 });
 
 export const DEFAULT_SKILLSMASTER_BASE_URL = "https://api.skillsmaster.jp";
@@ -44,8 +48,9 @@ export function loadConfig(env = process.env) {
     catch (error) { throw new ConfigError(`Config file ${file} is not valid JSON: ${error.message}`); }
   } else {
     const envModes = [env.SKILLSMASTER_MODE, env.IMAGE_STUDIO_MODE].map((value) => value?.trim()).filter(Boolean);
+    if (!envModes.length && env.IMAGE_STUDIO_DEFAULT_MODE) envModes.push(env.IMAGE_STUDIO_DEFAULT_MODE.trim());
     if (envModes.length === 0) {
-      throw new ConfigError("Set IMAGE_STUDIO_CONFIG to a config file or SKILLSMASTER_MODE / IMAGE_STUDIO_MODE to platform|standalone");
+      throw new ConfigError("Set IMAGE_STUDIO_CONFIG to a config file or SKILLSMASTER_MODE / IMAGE_STUDIO_MODE to platform|standalone|hosted");
     }
     if (new Set(envModes).size > 1) throw new ConfigError("SKILLSMASTER_MODE and IMAGE_STUDIO_MODE disagree");
     raw = { mode: envModes[0] };
@@ -77,6 +82,28 @@ export function normalizeConfig(raw, env = {}) {
       throw new ConfigError("Platform mode must not be given a skillsmaster customer key");
     }
     return Object.freeze({ mode, server: Object.freeze({ port, host, staticDir }) });
+  }
+
+  if (mode === "hosted") {
+    for (const key of ["ai", "access"]) {
+      if (raw[key] != null) throw new ConfigError(`"${key}" is not allowed in hosted mode`);
+    }
+    for (const key of ["SKILLSMASTER_CUSTOMER_KEY", "SKILLSMASTER_CUSTOMER_KEY_FILE", "IMAGE_STUDIO_ACCESS_TOKEN_FILE"]) {
+      if (env[key]) throw new ConfigError(`${key} is not allowed in hosted mode`);
+    }
+    const identity = objectOrEmpty(raw.identity, "identity");
+    const publicOrigin = hostedOrigin(env.WEB_APP_PUBLIC_ORIGIN ?? env.IMAGE_STUDIO_PUBLIC_ORIGIN ?? identity.publicOrigin, "identity.publicOrigin");
+    const platformOrigin = hostedOrigin(env.SKILLSMASTER_API_BASE_URL ?? identity.platformOrigin, "identity.platformOrigin");
+    if (publicOrigin === platformOrigin) throw new ConfigError("Hosted Image Studio must use an origin distinct from the platform");
+    const storage = objectOrEmpty(raw.storage, "storage");
+    const rootDir = path.resolve(string(env.WEB_APP_DATA_DIR ?? env.IMAGE_STUDIO_DATA_DIR ?? storage.rootDir ?? "/data/image-studio", "storage.rootDir"));
+    return Object.freeze({ mode, server: Object.freeze({ port, host, staticDir }),
+      identity: Object.freeze({ publicOrigin, platformOrigin, moduleId: "image-studio" }),
+      storage: Object.freeze({ rootDir,
+        maxUploadBytes: integer(storage.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES, "storage.maxUploadBytes", 1024, 512 * 1024 * 1024),
+        maxDocumentBytes: integer(storage.maxDocumentBytes ?? DEFAULT_MAX_DOCUMENT_BYTES, "storage.maxDocumentBytes", 1024, 256 * 1024 * 1024),
+      }),
+    });
   }
 
   const storage = objectOrEmpty(raw.storage, "storage");
@@ -160,6 +187,17 @@ function parseBaseUrl(value) {
   if (!["http:", "https:"].includes(url.protocol)) throw new ConfigError("ai.baseUrl must use http or https");
   if (url.username || url.password) throw new ConfigError("ai.baseUrl must not embed credentials");
   return url.toString().replace(/\/+$/, "");
+}
+
+function hostedOrigin(value, name) {
+  const input = string(value, name);
+  let url;
+  try { url = new URL(input); } catch { throw new ConfigError(`${name} must be an absolute origin`); }
+  const local = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !local) || url.origin !== input || url.username || url.password) {
+    throw new ConfigError(`${name} must be an HTTPS origin (loopback HTTP is allowed for development)`);
+  }
+  return url.origin;
 }
 
 function readSecretFile(file, label) {

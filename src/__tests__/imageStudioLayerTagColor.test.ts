@@ -27,12 +27,16 @@ describe("layer tag colours (image-studio#25)", () => {
     expect(copy.tagColor).not.toBe(raster.tagColor);
   });
 
-  it("persists the colour and rejects layers without a valid one", () => {
+  it("persists colors, deterministically migrates untagged v14 layers and rejects invalid colors", () => {
     const raster = { ...rasterLayerFromImage({ dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", width: 4, height: 4, name: "a.png" }), tagColor: "#A1B2C3" };
     const document = addLayer(createEmptyDocument(), raster);
     expect(parseDocument(serializeDocument(document)).layers[0].tagColor).toBe("#a1b2c3");
     const { tagColor: _removed, ...untagged } = raster;
-    expect(() => parseDocument(serializeDocument({ ...document, layers: [untagged as typeof raster] }))).toThrow("tag color");
+    const legacy = serializeDocument({ ...document, layers: [untagged as typeof raster] });
+    const migrated = parseDocument(legacy);
+    expect(migrated.layers[0].tagColor).toMatch(HEX);
+    expect(parseDocument(legacy).layers[0].tagColor).toBe(migrated.layers[0].tagColor);
+    expect(parseDocument(serializeDocument(migrated)).layers[0].tagColor).toBe(migrated.layers[0].tagColor);
     expect(() => parseDocument(serializeDocument({ ...document, layers: [{ ...raster, tagColor: "red" }] }))).toThrow("tag color");
   });
 

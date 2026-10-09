@@ -52,6 +52,19 @@ describe("Image Studio startup by runtime mode", () => {
     expect(deps.requireUser).not.toHaveBeenCalled();
   });
 
+  it("requires hosted identity before rendering the independent application", async () => {
+    const config = { mode: "hosted" as const, aiAvailable: true, platformOrigin: "https://api.skillsmaster.jp" };
+    const deps = dependencies({ loadConfig: async () => config, requireUser: jest.fn(async () => false) });
+    await expect(startImageStudio(deps)).resolves.toBe("login-required");
+    expect(deps.render).not.toHaveBeenCalled();
+    deps.requireUser.mockResolvedValue(true);
+    await expect(startImageStudio(deps)).resolves.toBe("rendered");
+    expect(deps.render).toHaveBeenCalledWith(config);
+    setRuntimeConfigForTests(config);
+    expect(createAiRunGateway()).toBeInstanceOf(StandaloneAiRunGateway);
+    expect(modeManifestUrl()).toBe(STANDALONE_MODE_MANIFEST_URL);
+  });
+
   it("selects the AI adapter strictly from the loaded mode", () => {
     expect(() => createAiRunGateway()).toThrow("not been loaded");
     setRuntimeConfigForTests({ mode: "platform", aiAvailable: true });

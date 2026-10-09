@@ -1,4 +1,4 @@
-# Image Studio — one image for both runtime modes (Issue #1).
+# Image Studio — one image for static, standalone and hosted runtime modes.
 #
 #   docker build -t image-studio .
 #
@@ -18,7 +18,7 @@ RUN npm run build
 
 FROM node:22-alpine AS production
 ENV NODE_ENV=production \
-    IMAGE_STUDIO_MODE=platform \
+    IMAGE_STUDIO_DEFAULT_MODE=platform \
     IMAGE_STUDIO_STATIC_DIR=/app/dist
 WORKDIR /app
 COPY --chown=root:root server ./server

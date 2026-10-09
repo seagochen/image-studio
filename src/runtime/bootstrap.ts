@@ -23,7 +23,7 @@ export async function startImageStudio(dependencies: StartupDependencies): Promi
     dependencies.showError(`Image Studio could not start: ${(error as Error).message}`);
     return "config-error";
   }
-  if (config.mode === "platform" && !(await dependencies.requireUser())) return "login-required";
+  if (config.mode !== "standalone" && !(await dependencies.requireUser())) return "login-required";
   dependencies.render(config);
   return "rendered";
 }

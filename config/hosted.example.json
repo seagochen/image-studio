@@ -1,0 +1,9 @@
+{
+  "mode": "hosted",
+  "server": { "port": 8080 },
+  "identity": {
+    "publicOrigin": "https://imagestudio.apps.skillsmaster.jp",
+    "platformOrigin": "https://www.skillsmaster.jp"
+  },
+  "storage": { "rootDir": "/data/image-studio" }
+}

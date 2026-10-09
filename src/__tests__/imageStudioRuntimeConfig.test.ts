@@ -3,9 +3,13 @@ import { loadRuntimeConfig, parseRuntimeConfig, runtimeConfig, setRuntimeConfigF
 describe("Image Studio runtime mode", () => {
   afterEach(() => setRuntimeConfigForTests(null));
 
-  it("accepts only the two explicit modes", () => {
+  it("accepts the three explicit modes and requires a platform origin for hosted mode", () => {
     expect(parseRuntimeConfig({ mode: "platform" })).toEqual({ mode: "platform", aiAvailable: true });
     expect(parseRuntimeConfig({ mode: "standalone", ai: { available: false } })).toEqual({ mode: "standalone", aiAvailable: false });
+    expect(parseRuntimeConfig({ mode: "hosted", platformOrigin: "https://api.skillsmaster.jp" }))
+      .toEqual({ mode: "hosted", aiAvailable: true, platformOrigin: "https://api.skillsmaster.jp" });
+    expect(() => parseRuntimeConfig({ mode: "hosted" })).toThrow("platform origin");
+    expect(() => parseRuntimeConfig({ mode: "hosted", platformOrigin: "javascript:alert(1)" })).toThrow();
     expect(() => parseRuntimeConfig({ mode: "local" })).toThrow("runtime mode");
     expect(() => parseRuntimeConfig(null)).toThrow("runtime config");
   });

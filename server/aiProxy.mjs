@@ -23,9 +23,11 @@ const NOT_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOST
 export const NO_KEY_REASON = "No skillsmaster API key is configured. Add one in Settings → API Key.";
 const API_KEY_PATTERN = /^[\x21-\x7e]{8,512}$/;
 
-export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
+export function createAiProxy({ ai, store, appSessionToken = null, fetchImpl = globalThis.fetch }) {
   const enabled = ai.enabled === true;
-  const keys = enabled ? createKeyStore(ai) : null;
+  const keys = enabled ? (appSessionToken
+    ? { current: () => appSessionToken, source: () => "config" }
+    : createKeyStore(ai)) : null;
 
   function requireEnabled() {
     if (!enabled) throw new AiUnavailableError(ai.reason ?? "AI is disabled for this Image Studio installation");
@@ -40,7 +42,8 @@ export function createAiProxy({ ai, store, fetchImpl = globalThis.fetch }) {
 
   async function upstream(pathname, init = {}, key = requireKey()) {
     const url = new URL(pathname, `${ai.baseUrl}/`);
-    return request(url, { ...init, headers: { ...init.headers, "X-Customer-Key": key } });
+    const credentials = appSessionToken ? { Authorization: `Bearer ${key}` } : { "X-Customer-Key": key };
+    return request(url, { ...init, headers: { ...init.headers, ...credentials } });
   }
 
   async function request(url, init) {

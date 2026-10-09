@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "kind": "service-webapp",
+  "moduleId": "image-studio",
+  "version": "0.3.0",
+  "suggestedSlug": "image-studio",
+  "containerPort": 8080,
+  "healthPath": "/healthz",
+  "platformApiVersion": "v1",
+  "presentation": {
+    "icon": "image",
+    "titleKey": "platform.imageStudio",
+    "descriptionKey": "portal.imageStudioDesc"
+  },
+  "capabilities": [
+    "platform.auth",
+    "platform.ai-runs"
+  ]
+}
