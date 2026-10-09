@@ -1,5 +1,5 @@
 import type { AdjustmentDefinition, AdjustmentKind, AdjustmentLayer, ImageStudioDocument, LayerBlendMode } from "./document";
-import { createId, defaultTransform } from "./document";
+import { createId, defaultTransform, layerTagColor } from "./document";
 
 export function defaultAdjustment(kind: AdjustmentKind): AdjustmentDefinition {
   const parameters: AdjustmentDefinition["parameters"] = kind === "exposure" ? { exposure: 0, offset: 0, gamma: 1 }
@@ -27,7 +27,7 @@ function selectiveColorDefaults(): AdjustmentDefinition["parameters"] {
 
 export function createAdjustmentLayer(document: ImageStudioDocument, kind: AdjustmentKind, name: string, parentId: string | null = null): AdjustmentLayer {
   return {
-    id: createId("adjustment"), type: "adjustment", name, visible: true, locked: false, opacity: 1, blendMode: "normal",
+    id: createId("adjustment"), type: "adjustment", name, tagColor: layerTagColor(), visible: true, locked: false, opacity: 1, blendMode: "normal",
     parentId, transform: defaultTransform(), width: document.canvas.width, height: document.canvas.height,
     adjustment: defaultAdjustment(kind),
   };

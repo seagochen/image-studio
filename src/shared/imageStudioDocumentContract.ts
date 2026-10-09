@@ -184,8 +184,9 @@ function buildLayer(value: unknown, options: NormalizeOptions): Record<string, a
     || !positive(value.width) || !positive(value.height) || value.width > MAX_CANVAS_EDGE || value.height > MAX_CANVAS_EDGE || !validTransform(value.transform)) {
     invalid("Invalid Image Studio layer");
   }
+  if (typeof value.tagColor !== "string" || !/^#[0-9a-f]{6}$/i.test(value.tagColor)) invalid("Invalid Image Studio layer tag color");
   const base: Record<string, any> = {
-    id: value.id, name: value.name, visible: value.visible, locked: value.locked, opacity: value.opacity,
+    id: value.id, name: value.name, tagColor: value.tagColor.toLowerCase(), visible: value.visible, locked: value.locked, opacity: value.opacity,
     blendMode: value.blendMode, width: value.width, height: value.height,
     transform: { x: value.transform.x, y: value.transform.y, scaleX: value.transform.scaleX, scaleY: value.transform.scaleY, rotation: value.transform.rotation },
     parentId: value.parentId ?? null,

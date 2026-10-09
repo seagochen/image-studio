@@ -8,7 +8,7 @@ describe("Image Studio project packages", () => {
 
   it("round-trips document layers and embedded asset relationships", async () => {
     const initial = createEmptyDocument();
-    const layer: RasterLayer = { id: "raster-1", type: "raster", name: "Photo", visible: true, locked: false, opacity: 1, blendMode: "normal",
+    const layer: RasterLayer = { id: "raster-1", type: "raster", name: "Photo", tagColor: "#3b82f6", visible: true, locked: false, opacity: 1, blendMode: "normal",
       transform: defaultTransform(), width: 1, height: 1, source: { kind: "data-url", mimeType: "image/png", value: "data:image/png;base64,iVBORw0KGgo=" } };
     const restored = await parseProjectPackage(await serializeProjectPackage(addLayer(initial, layer)));
     expect(restored.id).not.toBe(initial.id);
@@ -20,7 +20,7 @@ describe("Image Studio project packages", () => {
     const document = createEmptyDocument();
     await expect(parseProjectPackage(JSON.stringify({ kind: "skillsmaster-image-studio-project", packageVersion: 1, document, assets: [{ id: "x", mimeType: "text/html", dataUrl: "data:text/html;base64,AA==", sha256: "0".repeat(64) }] })))
       .rejects.toThrow("supported image");
-    const raster: RasterLayer = { id: "raster-1", type: "raster", name: "Photo", visible: true, locked: false, opacity: 1, blendMode: "normal",
+    const raster: RasterLayer = { id: "raster-1", type: "raster", name: "Photo", tagColor: "#3b82f6", visible: true, locked: false, opacity: 1, blendMode: "normal",
       transform: defaultTransform(), width: 1, height: 1, source: { kind: "data-url", mimeType: "image/png", value: "data:image/png;base64,iVBORw0KGgo=" } };
     const uncheckedDocument = addLayer(createEmptyDocument(), raster);
     await expect(parseProjectPackage(JSON.stringify({ kind: "skillsmaster-image-studio-project", packageVersion: 1, document: uncheckedDocument, assets: [] })))

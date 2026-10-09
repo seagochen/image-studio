@@ -42,7 +42,7 @@
 
 ## 一致性约束
 
-- 选区/蒙版、增量历史、渲染、变换、色彩和导出共享同一套文档语义（`src/shared/imageStudioDocumentContract.ts`）。新能力扩展文档时必须提供版本迁移，旧项目仍能打开。
+- 选区/蒙版、增量历史、渲染、变换、色彩和导出共享同一套文档语义（`src/shared/imageStudioDocumentContract.ts`）。新能力扩展文档时必须提供版本迁移，旧项目仍能打开；系统正式投入使用前例外，例如 #25 的必填 `tagColor` 不做迁移（见 [photocraft-workbench.md](photocraft-workbench.md) 第四轮）。
 - 大画布与跨浏览器的证据由对应子 Issue 提供（`tests/browser/*-4k.html` 等可复跑页面）。
 - 未列入近期优先级的能力不阻塞已独立验收的功能。
 - 范围或产品定位变化时，同步更新 #2、本文件及对应子 Issue。skillsmaster 主仓库不再维护重复的 Image Studio 专业化清单。

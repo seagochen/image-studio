@@ -6,6 +6,7 @@ import type { PixelSelectionMask } from "./pixelTools";
 import {
   cloneDocument,
   createId,
+  layerTagColor,
   defaultTransform,
   touchDocument,
   type AnnotationElement,
@@ -40,7 +41,7 @@ export function insertLayerAfter(document: ImageStudioDocument, afterLayerId: st
 
 export function createDrawingLayer(document: ImageStudioDocument, type: "paint" | "mask", name: string): DrawingLayer {
   return {
-    id: createId(type), type, name, visible: true, locked: false, opacity: type === "mask" ? 0.55 : 1, blendMode: "normal",
+    id: createId(type), type, name, tagColor: layerTagColor(), visible: true, locked: false, opacity: type === "mask" ? 0.55 : 1, blendMode: "normal",
     parentId: null, transform: defaultTransform(), width: document.canvas.width, height: document.canvas.height, strokes: [],
   };
 }
@@ -73,7 +74,7 @@ export function attachPaintAsRasterMask(document: ImageStudioDocument, paintId: 
 
 export function createAnnotationLayer(document: ImageStudioDocument, name: string): AnnotationLayer {
   return {
-    id: createId("annotation"), type: "annotation", name, visible: true, locked: false, opacity: 1, blendMode: "normal",
+    id: createId("annotation"), type: "annotation", name, tagColor: layerTagColor(), visible: true, locked: false, opacity: 1, blendMode: "normal",
     parentId: null, transform: defaultTransform(), width: document.canvas.width, height: document.canvas.height, elements: [],
   };
 }
@@ -154,10 +155,10 @@ export function liftSelectedVectorLayer(
     if (!localCount || !outsideCount) return document;
     const outsideMask: DrawingLayer = { ...existingMask, clipRuns: encodeSelectionRuns({ ...selection, pixels: outsidePixels }),
       clipInverted: undefined };
-    const localMask: DrawingLayer = { ...structuredClone(existingMask), id: createId("mask"),
+    const localMask: DrawingLayer = { ...structuredClone(existingMask), id: createId("mask"), tagColor: layerTagColor(),
       name: `${source.name} selection mask`, clipRuns: encodeSelectionRuns({ ...selection, pixels: localPixels }),
       clipInverted: undefined };
-    const local = { ...structuredClone(source), id: createId(source.type), name: `${source.name} selection`,
+    const local = { ...structuredClone(source), id: createId(source.type), tagColor: layerTagColor(), name: `${source.name} selection`,
       rasterMaskId: localMask.id };
     const layers = document.layers.map((layer) => layer.id === existingMask.id ? outsideMask : layer);
     layers.splice(Math.max(index, layers.findIndex((layer) => layer.id === existingMask.id)) + 1, 0, local, localMask);
@@ -174,7 +175,7 @@ export function liftSelectedVectorLayer(
     opacity: 1, selectionRuns: [...runs],
   };
   const outside = { ...source, rasterMaskId: sourceMask.id, rasterMaskInverted: true };
-  const local = { ...structuredClone(source), id: createId(source.type), name: `${source.name} selection`,
+  const local = { ...structuredClone(source), id: createId(source.type), tagColor: layerTagColor(), name: `${source.name} selection`,
     rasterMaskId: localMask.id, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined };
   const layers = [...document.layers];
   layers.splice(index, 1, outside, sourceMask, local, localMask);
@@ -199,7 +200,7 @@ export function addSelectionMaskedAdjustmentLayer(
     transform: { ...source.transform }, width: source.width, height: source.height, opacity: 1, selectionRuns: runs,
   };
   const copiedMask: DrawingLayer | null = sourceMask?.type === "mask" ? {
-    ...structuredClone(sourceMask), id: createId("mask"), name: `${adjustment.name} source mask`,
+    ...structuredClone(sourceMask), id: createId("mask"), tagColor: layerTagColor(), name: `${adjustment.name} source mask`,
     parentId: source.parentId, transform: { ...source.transform }, opacity: 1, blendMode: "normal",
     visible: true, locked: false, adjustmentMaskInverted: source.rasterMaskInverted,
     adjustmentMaskFeatherPx: source.rasterMaskFeatherPx,
@@ -210,7 +211,7 @@ export function addSelectionMaskedAdjustmentLayer(
 
 export function createGroupLayer(document: ImageStudioDocument, name: string, parentId: string | null = null): GroupLayer {
   return {
-    id: createId("group"), type: "group", name, visible: true, locked: false, opacity: 1, blendMode: "normal",
+    id: createId("group"), type: "group", name, tagColor: layerTagColor(), visible: true, locked: false, opacity: 1, blendMode: "normal",
     parentId, transform: defaultTransform(), width: document.canvas.width, height: document.canvas.height, collapsed: false,
   };
 }
@@ -295,7 +296,7 @@ export function duplicateLayer(document: ImageStudioDocument, layerId: string): 
   const subtree = document.layers.filter((layer) => copiedIds.has(layer.id));
   const ids = new Map(subtree.map((layer) => [layer.id, createId(layer.type)]));
   const copies = cloneDocument({ ...document, layers: subtree }).layers.map((layer) => {
-    const copy = { ...layer, id: ids.get(layer.id)!, parentId: ids.get(layer.parentId ?? "") ?? layer.parentId ?? null,
+    const copy = { ...layer, id: ids.get(layer.id)!, tagColor: layerTagColor(), parentId: ids.get(layer.parentId ?? "") ?? layer.parentId ?? null,
       rasterMaskId: layer.rasterMaskId ? ids.get(layer.rasterMaskId) : undefined };
     if (layer.id === layerId) {
       copy.name = `${original.name} copy`;

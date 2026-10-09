@@ -17,7 +17,7 @@ describe("conventional editor adapter", () => {
     expect(source).not.toContain("editor-mode-tabs");
     expect(source.match(/PRESETS\.map/g)).toHaveLength(1);
     const studio = readFileSync(resolve(__dirname, "../studio/Studio.tsx"), "utf8");
-    expect(studio).toContain("if (outcome.output.resizeCanvas) fitView");
+    expect(studio).toContain("if (outcome.output.canvasResize) fitView");
   });
 
   it("applies dimensions and pixels as one reversible document command", () => {
@@ -64,7 +64,7 @@ describe("conventional editor adapter", () => {
     const replacement = { width: 80, height: 100, source: { kind: "data-url" as const, value: DATA_URL, mimeType: "image/png" } };
     expect(replaceRasterLayer(document, raster.id, replacement)).toBe(document);
     expect(applyConventionalEditorOutcome(document, raster.id, { kind: "saved", output: {
-      dataUrl: DATA_URL, mimeType: "image/png", width: 80, height: 100, resizeCanvas: true,
+      dataUrl: DATA_URL, mimeType: "image/png", width: 80, height: 100,
     } })).toBe(document);
   });
 
@@ -85,17 +85,41 @@ describe("conventional editor adapter", () => {
     expect(applyConventionalEditorOutcome(document, "unused", { kind: "cancelled" })).toBe(document);
   });
 
-  it("resizes the canvas and resets the layer origin after a geometry edit", () => {
+  const geometryFixture = (transform = { x: 40, y: 25, scaleX: 1, scaleY: 1, rotation: 0 }) => {
     const empty = createEmptyDocument();
-    const layer = {
-      ...rasterLayerFromImage({ dataUrl: DATA_URL, mimeType: "image/png", width: 100, height: 80, name: "input.png" }),
-      transform: { x: 40, y: 25, scaleX: 2, scaleY: 2, rotation: 90 },
-    };
-    const document = { ...empty, canvas: { width: 100, height: 80 }, layers: [layer], selection: { layerId: layer.id } };
+    const layer = { ...rasterLayerFromImage({ dataUrl: DATA_URL, mimeType: "image/png", width: 100, height: 80, name: "input.png" }), transform };
+    return { layer, document: { ...empty, canvas: { width: 100, height: 80 }, layers: [layer], selection: { layerId: layer.id } } };
+  };
+
+  it("crops and rotates the layer only, keeping the kept region's centre on the canvas", () => {
+    const { layer, document } = geometryFixture();
     const result = applyConventionalEditorOutcome(document, layer.id, { kind: "saved", output: {
-      dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", width: 80, height: 100, resizeCanvas: true,
+      dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", width: 40, height: 60,
+      crop: { x: 10, y: 20, width: 60, height: 40 },
     } });
-    expect(result.canvas).toEqual({ width: 80, height: 100 });
-    expect(result.layers[0]).toMatchObject({ width: 80, height: 100, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 } });
+    expect(result.canvas).toEqual(document.canvas);
+    expect(result.layers[0]).toMatchObject({ width: 40, height: 60, transform: { x: 60, y: 35, scaleX: 1, scaleY: 1, rotation: 0 } });
+  });
+
+  it("preserves the layer's own scale and rotation through a geometry edit", () => {
+    const { layer, document } = geometryFixture({ x: 40, y: 25, scaleX: 2, scaleY: 2, rotation: 90 });
+    const result = applyConventionalEditorOutcome(document, layer.id, { kind: "saved", output: {
+      dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", width: 80, height: 100,
+    } });
+    const { transform } = result.layers[0];
+    expect(result.canvas).toEqual(document.canvas);
+    expect(transform).toMatchObject({ scaleX: 2, scaleY: 2, rotation: 90 });
+    expect(transform.x).toBeCloseTo(60);
+    expect(transform.y).toBeCloseTo(45);
+  });
+
+  it("applies the size tool as a canvas resize without resampling the layer", () => {
+    const { layer, document } = geometryFixture();
+    const result = applyConventionalEditorOutcome(document, layer.id, { kind: "saved", output: {
+      dataUrl: "data:image/png;base64,AAAA", mimeType: "image/png", width: 100, height: 80,
+      canvasResize: { width: 200, height: 100, anchor: { x: 0.5, y: 0.5 } },
+    } });
+    expect(result.canvas).toEqual({ width: 200, height: 100 });
+    expect(result.layers[0]).toMatchObject({ width: 100, height: 80, transform: { x: 90, y: 35, scaleX: 1, scaleY: 1 } });
   });
 });

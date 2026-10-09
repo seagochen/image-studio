@@ -8,7 +8,8 @@ import { CanvasTextEditor } from "./CanvasTextEditor";
 import { SelectionRefinementPanel } from "./SelectionRefinementPanel";
 import { LayerEffectsPanel } from "./LayerEffectsPanel";
 import { CanvasCrop } from "./CanvasCrop";
-import { cropCanvas, snapLayer } from "../domain/layoutCommands";
+import { cropCanvas, resizeCanvas, snapLayer } from "../domain/layoutCommands";
+import { CanvasSizeDialog, canvasSizeCopy } from "./CanvasSizeDialog";
 import { editingCopy } from "./editingCopy";
 import { disabledReasonCopy, hintTitle, layerEditBlocker, type DisabledReason } from "./disabledReasons";
 import { copyLayer, pasteLayer } from "../domain/layerClipboard";
@@ -19,7 +20,7 @@ import { useCanvasViewport, MAX_ZOOM, MIN_ZOOM } from "./useCanvasViewport";
 import { useStudioProject } from "./useStudioProject";
 import { useRasterToolSession } from "./useRasterToolSession";
 import {
-  SECONDARY_TOOLS, SELECTION_TOOLS, DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, SIZED_CURSOR_TOOLS, TOOL_LABELS,
+  SECONDARY_TOOLS, SELECTION_TOOLS, DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, SIZED_CURSOR_TOOLS, TOOL_LABELS, LAYER_TRANSFORMER_PROPS,
   type Tool, type ShapeTool, type PixelSelection, type MarqueeDraft,
 } from "./tools";
 import { LayerInteractions } from "./LayerInteractions";
@@ -49,7 +50,9 @@ import {
 import {
   createArrowElement, createEllipseElement, createLineElement, createPolygonElement, createRectElement, createStarElement, createTextElement,
 } from "../domain/annotation";
-import { requestNativeColor, sampledPixelColor, type EyeDropperConstructor } from "../domain/eyedropper";
+import { requestNativeColor, type EyeDropperConstructor } from "../domain/eyedropper";
+import { EyedropperLoupe, UI_OVERLAY_LAYER_NAME, captureStagePixels } from "./EyedropperLoupe";
+import { LAYER_TAG_OVERLAY_OPACITY, useLayerTagOverlay } from "./useLayerTagOverlay";
 import { DocumentHistory } from "../domain/history";
 import { applyPixelTileDiffs, PixelTileArchive, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
@@ -116,6 +119,10 @@ export function Studio(): JSX.Element {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const { viewport, setViewport, surfaceSize, fitView, zoomAt, actualSize } = useCanvasViewport(surfaceRef, document.canvas);
   const [tool, setTool] = useState<Tool>("select");
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
+  const toolBeforeEyedropperRef = useRef<Tool>("select");
+  const [eyedropperSource, setEyedropperSource] = useState<HTMLCanvasElement | null>(null);
   const [selectionOperation, setSelectionOperation] = useState<SelectionOperation>("replace");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("properties");
   const [pathEditing,setPathEditing]=useState<{layerId?:string;mask:boolean;initial?:import("../domain/document").AnnotationPathElement}|null>(null);
@@ -148,6 +155,7 @@ export function Studio(): JSX.Element {
   const [shortcutBindings, setShortcutBindings] = useState(loadShortcuts);
   const [adjustmentDraft, setAdjustmentDraft] = useState<{ layer: AdjustmentLayer; sourceLayerId: string | null; selection: PixelSelectionMask | null } | null>(null);
   const [cropOpen, setCropOpen] = useState(false);
+  const [canvasSizeOpen, setCanvasSizeOpen] = useState(false);
   const [gridEnabled, setGridEnabled] = useState(false);
   const [rulersEnabled, setRulersEnabled] = useState(false);
   const [gridSpacing, setGridSpacing] = useState(32);
@@ -426,7 +434,7 @@ export function Studio(): JSX.Element {
 
   useEffect(() => {
     const surface = surfaceRef.current;
-    if (!surface || pathEditing || cropOpen || historyBusy || paletteOpen || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft) return;
+    if (!surface || pathEditing || cropOpen || historyBusy || paletteOpen || aiOpen || deliveryOpen || editorInput || settingsOpen || apiKeyOpen || fileBusy || adjustmentDraft || canvasSizeOpen) return;
     return bindConfiguredShortcuts(surface, shortcutBindings, (action) => {
       if (historyBusyRef.current) return;
       if (action === "undo") undoDocument();
@@ -436,7 +444,7 @@ export function Studio(): JSX.Element {
       else if (action === "paste") pasteCopiedLayer();
       else if (action === "delete") removeSelectedLayer();
       else if (action === "fit") fitView();
-      else if (action === "eyedropper") void pickScreenColor();
+      else if (action === "eyedropper") activateTool("eyedropper");
       else {
         if (SECONDARY_TOOLS.includes(action) && (selected?.type !== "raster" || !selectedEditable || selectedRasterTooLarge)) return;
         if (SELECTION_TOOLS.includes(action) && (!selected || !["raster", "paint", "annotation"].includes(selected.type)
@@ -445,7 +453,7 @@ export function Studio(): JSX.Element {
         setTool(action); setInspectorTab("properties");
       }
     });
-  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, pathEditing, cropOpen, historyBusy, paletteOpen, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
+  }, [copySelectedLayer, cutSelectedLayer, pasteCopiedLayer, removeSelectedLayer, pathEditing, cropOpen, historyBusy, paletteOpen, aiOpen, deliveryOpen, editorInput, settingsOpen, apiKeyOpen, fileBusy, adjustmentDraft, canvasSizeOpen, shortcutBindings, fitView, redoDocument, selected, selectedEditable, selectedRasterTooLarge, undoDocument]);
 
   useEffect(() => {
     const closeMenusOutside = (event: MouseEvent) => {
@@ -470,20 +478,25 @@ export function Studio(): JSX.Element {
       else setTextFocusRequest((value) => value + 1);
     }
   };
+  const nativeEyeDropper = (window as Window & { EyeDropper?: EyeDropperConstructor }).EyeDropper;
+  /** Samples outside the canvas through the browser picker, whose loupe the page cannot place. */
   const pickScreenColor = async () => {
-    setTool("eyedropper");
-    setInspectorTab("properties");
-    const EyeDropper = (window as Window & { EyeDropper?: EyeDropperConstructor }).EyeDropper;
-    const result = await requestNativeColor(EyeDropper);
+    const result = await requestNativeColor(nativeEyeDropper);
     if (result.status === "picked") changePaintColor(result.color);
   };
   const history = historyRef.current.state;
+  // Selecting a layer on the canvas tints the pixels it owns, like a segmentation mask.
+  const layerTagOverlay = useLayerTagOverlay(selected, tool === "select");
   const selectionPreview = useMemo(() => pixelSelection ? createSelectionPreview(pixelSelection) : null, [pixelSelection]);
   const paintHsv = useMemo(() => hexToHsv(paintColor), [paintColor]);
   const harmonySwatches = useMemo(() => colorSchemeSwatches(paintColor, colorScheme), [paintColor, colorScheme]);
   const previewHistogram = useMemo(() => compositePreview ? previewLuminosityHistogram(compositePreview) : undefined, [compositePreview]);
   const toolLabels = TOOL_LABELS[locale];
-  const activateTool = (next: Tool) => { setTool(next); setInspectorTab("properties"); };
+  const activateTool = (next: Tool) => {
+    // Read through the ref: shortcut handlers keep the closure of an earlier render.
+    if (next === "eyedropper" && toolRef.current !== "eyedropper") toolBeforeEyedropperRef.current = toolRef.current;
+    setTool(next); setInspectorTab("properties");
+  };
   const toolLabel = (name: Tool) => name === "select" || name === "hand" || name === "brush" || name === "eraser" || name === "eyedropper"
     ? t(name) : toolLabels[name];
   const cursorToolSize = brushSize;
@@ -509,7 +522,8 @@ export function Studio(): JSX.Element {
     try {
       const coverage = resolveRasterEditCoverage(document, selected, pixelSelection?.layerId === selected.id ? pixelSelection : null);
       if (mode === "Perspective" && coverage) { setError("editFailed"); return; }
-      setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name, coverage });
+      setEditorTab(mode); setEditorInput({ sourceUrl: rasterSourceUrl(selected.source), mimeType: selected.source.mimeType, width: selected.width, height: selected.height, name: selected.name,
+        canvasWidth: document.canvas.width, canvasHeight: document.canvas.height, coverage });
     } catch { setError("editFailed"); }
   };
   const reasonCopy = disabledReasonCopy[locale];
@@ -526,7 +540,7 @@ export function Studio(): JSX.Element {
   const saveBlocker = !document.layers.length ? reasonCopy.noDocument : fileBusy ? reasonCopy.fileBusy : persistence === "saving" ? reasonCopy.saving : null;
   const commands = studioCommands({ locale, t, toolLabel, toolEnabled,
     toolShortcut: (next) => shortcutBindings[next as ShortcutAction],
-    activateTool: (next) => next === "eyedropper" ? void pickScreenColor() : activateTool(next),
+    activateTool,
     selectPanel: setInspectorTab, adjustmentLabels: ADJUSTMENT_KIND_LABELS[locale], createAdjustment: createAdjustmentForSelection,
     actions: {
       "file.save": { label: t("save"), enabled: Boolean(document.layers.length) && !fileBusy && persistence !== "saving", run: () => void manuallySaveProject() },
@@ -552,6 +566,7 @@ export function Studio(): JSX.Element {
       "filter.filters": { label: t("filters"), enabled: selected?.type === "raster" && selectedEditable, run: () => openRasterEditor("Filters") },
       "filter.perspective": { label: perspectiveCopy[locale].title, enabled: Boolean(selected?.type === "raster" && selectedEditable && !pixelSelection && !selected.rasterMaskId), run: () => openRasterEditor("Perspective") },
       "filter.ai": { label: t("aiEdit"), enabled: canUseAi, run: () => setAiOpen(true) },
+      "edit.canvasSize": { label: canvasSizeCopy[locale].title, enabled: true, run: () => setCanvasSizeOpen(true) },
       "view.grid": {label:layoutCopy[locale].grid,enabled:true,run:()=>setGridEnabled(value=>!value)},
       "view.rulers": {label:layoutCopy[locale].rulers,enabled:true,run:()=>setRulersEnabled(value=>!value)},
       "edit.path": {label:pathCopy[locale].pen,enabled:true,run:()=>{setTextEditing(null);setCropOpen(false);setPathEditing({mask:false});}},
@@ -560,7 +575,7 @@ export function Studio(): JSX.Element {
       "view.navigator": { label: t("navigator"), enabled: true, run: () => setNavigatorCollapsed((value) => !value) },
     },
   });
-  const modalOpen = aiOpen || deliveryOpen || Boolean(editorInput) || settingsOpen || apiKeyOpen || Boolean(adjustmentDraft);
+  const modalOpen = aiOpen || deliveryOpen || Boolean(editorInput) || settingsOpen || apiKeyOpen || Boolean(adjustmentDraft) || canvasSizeOpen;
   useEffect(() => {
     if (modalOpen || fileBusy || pathEditing || cropOpen || historyBusy) return;
     const keydown = (event: KeyboardEvent) => {
@@ -580,6 +595,24 @@ export function Studio(): JSX.Element {
     window.document.addEventListener("keydown", keydown);
     return () => window.document.removeEventListener("keydown", keydown);
   }, [commands, modalOpen, fileBusy, paletteOpen, shortcutBindings, pathEditing, cropOpen, historyBusy]);
+
+  // The loupe magnifies one capture per rendered state instead of re-rendering the stage per move.
+  useEffect(() => {
+    if (tool !== "eyedropper") { setEyedropperSource(null); return; }
+    const frame = requestAnimationFrame(() => setEyedropperSource(captureStagePixels(stageRef.current)));
+    return () => cancelAnimationFrame(frame);
+  }, [tool, document, viewport, surfaceSize, compositePreview]);
+  useEffect(() => {
+    if (tool !== "eyedropper") return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setCursorPreview(null);
+      setTool(toolBeforeEyedropperRef.current);
+    };
+    window.document.addEventListener("keydown", cancel);
+    return () => window.document.removeEventListener("keydown", cancel);
+  }, [tool, setCursorPreview]);
 
   useEffect(() => {
     if (!saveToast) return;
@@ -643,7 +676,7 @@ export function Studio(): JSX.Element {
       <ToolOptions tool={tool} label={toolLabel(tool)} locale={locale} t={t} color={paintColor} onColor={changePaintColor}
         size={brushSize} onSize={setBrushSize} brush={brushSettings} onBrush={updateBrushSettings}
         tolerance={magicTolerance} onTolerance={setMagicTolerance} selectionOperation={selectionOperation} onSelectionOperation={setSelectionOperation}
-        shape={shapeTool} onShape={setShapeTool} />
+        shape={shapeTool} onShape={setShapeTool} onPickScreen={nativeEyeDropper ? () => void pickScreenColor() : undefined} />
       {fileBusy && <div className="studio-warning" role="status">{fileCopy[locale].busy}</div>}
       {fileError && <div className="studio-error" role="alert">{fileError}</div>}
       {(error || persistenceError) && <div className="studio-error" role="alert">{error ? t(error) : `${t("saveFailed")}: ${persistenceError}`}</div>}
@@ -674,7 +707,7 @@ export function Studio(): JSX.Element {
           onOpenRasterEditor={openRasterEditor} onOpenAi={() => { invokeEditorCommand(commands, "filter.ai"); }} />
         <section className="canvas-column">
           <WorkbenchBar title={document.title} width={document.canvas.width} height={document.canvas.height} locale={locale}
-            onCommands={() => setPaletteOpen(true)} onCrop={() => setCropOpen(true)} snap={snapEnabled} onSnap={() => setSnapEnabled(value => !value)} layoutControls={<>
+            onCommands={() => setPaletteOpen(true)} onCrop={() => setCropOpen(true)} onCanvasSize={() => setCanvasSizeOpen(true)} snap={snapEnabled} onSnap={() => setSnapEnabled(value => !value)} layoutControls={<>
               <button onClick={()=>{setTextEditing(null);setCropOpen(false);setPathEditing({mask:false});}}>{pathCopy[locale].pen}</button>
               <button aria-pressed={gridEnabled} onClick={()=>setGridEnabled(value=>!value)}>{layoutCopy[locale].grid}</button>
               <button aria-pressed={rulersEnabled} onClick={()=>setRulersEnabled(value=>!value)}>{layoutCopy[locale].rulers}</button>
@@ -735,15 +768,15 @@ export function Studio(): JSX.Element {
                       onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} /> :
                     <DrawingNode layer={layer} selectable={tool === "select"} transformable={pixelSelection?.layerId !== layer.id} onSelect={() => setDocument((current) => selectLayer(current, layer.id))}
                       onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} />}
-                  {layer.type !== "group" && layer.type !== "adjustment" && selected?.id === layer.id && tool === "select" && !layer.locked && pixelSelection?.layerId !== layer.id &&
-                    <Transformer ref={transformerRef} rotateEnabled enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} />}
                 </Group>)}
+              {/* Outside the canvas clip: handles on or beyond the canvas edge must stay visible and grabbable. */}
+              {!requiresComposite && selected && selected.type !== "group" && selected.type !== "adjustment" && tool === "select" && !selected.locked && pixelSelection?.layerId !== selected.id &&
+                <Transformer ref={transformerRef} {...LAYER_TRANSFORMER_PROPS} />}
               {requiresComposite && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}>
                 <Group clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}><LayerInteractions layers={document.layers} selectable={tool === "select"} blockedTransformLayerId={pixelSelection?.layerId}
                   onSelect={(id, elementId) => selectObject(id, elementId)} onEdit={(id, elementId) => selectObject(id, elementId, true)}
                   onTransform={commitLayerTransform} /></Group>
-                {selected && selected.type !== "adjustment" && selectedEditable && tool === "select" && pixelSelection?.layerId !== selected.id && <Transformer ref={transformerRef}
-                  rotateEnabled enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} />}
+                {selected && selected.type !== "adjustment" && selectedEditable && tool === "select" && pixelSelection?.layerId !== selected.id && <Transformer ref={transformerRef} {...LAYER_TRANSFORMER_PROPS} />}
               </Group>}
               {draftAnnotation && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
@@ -752,11 +785,12 @@ export function Studio(): JSX.Element {
                     selectable={false} onSelect={() => undefined} onTransform={() => undefined} />)}
               </Group>}
             </Layer>
-            <Layer listening={false}>
+            <Layer listening={false} name={UI_OVERLAY_LAYER_NAME}>
               <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
                 {selected && (selected.type === "raster" || selected.type === "paint" || selected.type === "annotation") && wrapLayerAncestors(document.layers, selected.id, <Group x={selected.transform.x} y={selected.transform.y}
                   scaleX={selected.transform.scaleX} scaleY={selected.transform.scaleY} rotation={selected.transform.rotation}>
+                  {layerTagOverlay && <KonvaImage image={layerTagOverlay} width={selected.width} height={selected.height} opacity={LAYER_TAG_OVERLAY_OPACITY} />}
                   {selectionPreview && pixelSelection?.layerId === selected.id && <KonvaImage image={selectionPreview} width={selected.width} height={selected.height} opacity={0.72} />}
                   {marqueeDraft && tool === "marquee" && <Rect x={Math.min(marqueeDraft.start.x, marqueeDraft.end.x)} y={Math.min(marqueeDraft.start.y, marqueeDraft.end.y)}
                     width={Math.abs(marqueeDraft.end.x - marqueeDraft.start.x)} height={Math.abs(marqueeDraft.end.y - marqueeDraft.start.y)}
@@ -768,11 +802,12 @@ export function Studio(): JSX.Element {
                     closed={tool === "lasso"} stroke="#1f2937" strokeWidth={1} dash={[5, 4]} listening={false} />}
                 </Group>)}
               </Group>
-              {cursorPreview && <Circle name="current-color-preview" x={cursorPreview.x} y={cursorPreview.y}
+              {cursorPreview && tool !== "eyedropper" && <Circle name="current-color-preview" x={cursorPreview.x} y={cursorPreview.y}
                 radius={SIZED_CURSOR_TOOLS.includes(tool) ? Math.max(2, cursorRadius) : 7}
                 stroke="#111827" strokeWidth={1} fill={paintColor} opacity={0.25} listening={false} />}
             </Layer>
           </Stage>
+          {tool === "eyedropper" && cursorPreview && <EyedropperLoupe source={eyedropperSource} pointer={cursorPreview} surface={surfaceSize} />}
           <Navigator document={document} viewport={viewport} surfaceSize={surfaceSize} collapsed={navigatorCollapsed} onCollapsedChange={setNavigatorCollapsed}
             onPan={(offsetX, offsetY) => setViewport((current) => ({ ...current, offsetX, offsetY }))} t={t} />
           </div>
@@ -909,7 +944,7 @@ export function Studio(): JSX.Element {
           setEditorInput(null);
           if (outcome.kind === "saved") {
             commit((current) => applyConventionalEditorOutcome(current, selected.id, outcome), "Apply conventional edit");
-            if (outcome.output.resizeCanvas) fitView({ width: outcome.output.width, height: outcome.output.height });
+            if (outcome.output.canvasResize) fitView(outcome.output.canvasResize);
           }
         }} />}
       {editorInput && editorTab === "Perspective" && selected?.type === "raster" && <PerspectiveDialog input={editorInput} language={locale} onComplete={(outcome) => {
@@ -950,6 +985,11 @@ export function Studio(): JSX.Element {
           setPixelSelection(null);
           refreshHistory((value) => value + 1);
           return outcome.resultLayerId;
+        }} />}
+      {canvasSizeOpen && <CanvasSizeDialog width={document.canvas.width} height={document.canvas.height} locale={locale} onClose={() => setCanvasSizeOpen(false)}
+        onApply={(value) => {
+          commit((current) => resizeCanvas(current, value), "Resize canvas");
+          setPixelSelection(null); setCanvasSizeOpen(false); fitView(value);
         }} />}
       {apiKeyOpen && <ApiKeySettingsDialog copy={fileCopy[locale]} onClose={() => setApiKeyOpen(false)} />}
       {settingsOpen && <ShortcutSettingsDialog bindings={shortcutBindings} copy={fileCopy[locale]}

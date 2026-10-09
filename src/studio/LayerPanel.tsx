@@ -12,6 +12,7 @@ import { planLayerMerge } from "../domain/layerMerge";
 import { LAYER_UI } from "./brushLayerLabels";
 import { ProductIcon } from "./ProductIcon";
 import { LayerStateToggles } from "./LayerStateToggles";
+import { LayerTagSwatch } from "./LayerTagSwatch";
 import { AdjustmentMenu } from "./AdjustmentMenu";
 import { ADJUSTMENT_KIND_LABELS } from "./AdjustmentPanel";
 import { NewLayerMenu } from "./NewLayerMenu";
@@ -85,6 +86,8 @@ export function LayerPanel(props: Props): JSX.Element {
         <LayerStateToggles visible={layer.visible} locked={layer.locked} t={t} variant="row"
           onVisibilityChange={() => commit((current) => patchLayer(current, layer.id, { visible: !layer.visible }), "Toggle visibility")}
           onLockChange={() => commit((current) => patchLayer(current, layer.id, { locked: !layer.locked }), "Toggle lock")} />
+        <LayerTagSwatch color={layer.tagColor} layerName={layer.name} locale={locale}
+          onChange={(tagColor) => commit((current) => patchLayer(current, layer.id, { tagColor }), "Change layer color", `tag-color:${layer.id}`)} />
         <button className="layer-select" onClick={(event) => {
           if (event.shiftKey && selected && displayLayers.some(({ layer: candidate }) => candidate.id === selected.id)) {
             const ids = displayLayers.map(({ layer: candidate }) => candidate.id); const anchor = ids.indexOf(selected.id); const target = ids.indexOf(layer.id); const [from, to] = anchor < target ? [anchor, target] : [target, anchor]; setMultiSelectedIds(ids.slice(from, to + 1)); props.onSelectLayer(layer.id); return;

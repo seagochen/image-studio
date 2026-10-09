@@ -99,7 +99,7 @@ describe("ImageStudioDocument", () => {
     const initial = createEmptyDocument();
     const dataUrl = `data:image/png;base64,${"A".repeat(100_000)}`;
     const raster = {
-      id: "large-raster", name: "Large", type: "raster" as const, visible: true, locked: false,
+      id: "large-raster", name: "Large", type: "raster" as const, tagColor: "#3b82f6", visible: true, locked: false,
       opacity: 1, blendMode: "normal" as const, width: 10, height: 10,
       transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
       source: { kind: "data-url" as const, value: dataUrl, mimeType: "image/png" as const },
@@ -115,7 +115,7 @@ describe("ImageStudioDocument", () => {
     const history = new DocumentHistory();
     const initial = createEmptyDocument();
     const assetLayer = {
-      id: "asset-layer", name: "Asset", type: "raster" as const, visible: true, locked: false,
+      id: "asset-layer", name: "Asset", type: "raster" as const, tagColor: "#3b82f6", visible: true, locked: false,
       opacity: 1, blendMode: "normal" as const, width: 10, height: 10,
       transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
       source: { kind: "asset" as const, assetId: "asset-old", mimeType: "image/png" },

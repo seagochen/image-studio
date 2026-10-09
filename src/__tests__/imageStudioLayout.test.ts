@@ -1,7 +1,7 @@
 import { recenterViewport } from "../studio/useCanvasViewport";
-import { alignLayers, cropCanvas, layerBounds, snapLayer } from "../domain/layoutCommands";
+import { alignLayers, cropCanvas, layerBounds, resizeCanvas, snapLayer } from "../domain/layoutCommands";
 import { createEmptyDocument, parseDocument, serializeDocument, type RasterLayer } from "../domain/document";
-import { createDrawingLayer, createAttachedRasterMask, addLayer, patchLayer } from "../domain/commands";
+import { createDrawingLayer, createAttachedRasterMask, createGroupLayer, addLayer, patchLayer } from "../domain/commands";
 import { DocumentHistory } from "../domain/history";
 const fixture = () => {
     const empty = createEmptyDocument();
@@ -60,6 +60,46 @@ describe("layout commands", () => {
         expect(parseDocument(serializeDocument(cropped)).canvas).toEqual(cropped.canvas);
         expect(history.undo(cropped)).toBe(linked);
         expect(cropCanvas(linked, { x: -1, y: 0, width: 10, height: 10 })).toBe(linked);
+    });
+});
+describe("canvas size", () => {
+    const sized = () => {
+        const { paint, document } = fixture();
+        return { paint, document: { ...document, canvas: { width: 100, height: 80 }, guides: [{ id: "g", axis: "x" as const, position: 30 }] } };
+    };
+    it("changes only the canvas and moves root layers by the anchor", () => {
+        const { paint, document } = sized();
+        const centred = resizeCanvas(document, { width: 200, height: 100, anchor: { x: 0.5, y: 0.5 } });
+        expect(centred.canvas).toEqual({ width: 200, height: 100 });
+        expect(centred.layers[0]).toMatchObject({ width: 40, height: 20, transform: { x: 60, y: 30, scaleX: 1, scaleY: 1, rotation: 90 } });
+        expect(centred.guides?.[0].position).toBe(80);
+        const topLeft = resizeCanvas(document, { width: 200, height: 100, anchor: { x: 0, y: 0 } });
+        expect(topLeft.layers[0].transform).toEqual(paint.transform);
+        const bottomRight = resizeCanvas(document, { width: 200, height: 100, anchor: { x: 1, y: 1 } });
+        expect(bottomRight.layers[0].transform).toMatchObject({ x: 110, y: 40 });
+    });
+    it("shrinks without deleting pixels and keeps grouped children relative to their group", () => {
+        const { paint, document } = sized();
+        const group = createGroupLayer(document, "Group");
+        const child = { ...createDrawingLayer(document, "paint", "Child"), parentId: group.id, transform: { x: 5, y: 5, scaleX: 1, scaleY: 1, rotation: 0 } };
+        const nested = addLayer(addLayer(document, group), child);
+        const shrunk = resizeCanvas(nested, { width: 50, height: 40, anchor: { x: 1, y: 1 } });
+        expect(shrunk.canvas).toEqual({ width: 50, height: 40 });
+        const shrunkPaint = shrunk.layers.find((layer) => layer.id === paint.id);
+        if (shrunkPaint?.type !== "paint") throw new Error("Expected paint layer");
+        expect(shrunkPaint.strokes).toBe(paint.strokes);
+        expect(shrunkPaint.transform).toMatchObject({ x: -40, y: -20 });
+        expect(shrunk.layers.find((layer) => layer.id === child.id)?.transform).toEqual(child.transform);
+    });
+    it("is undone in one step and rejects invalid or unchanged sizes", () => {
+        const { document } = sized();
+        const history = new DocumentHistory();
+        const resized = resizeCanvas(document, { width: 120, height: 90, anchor: { x: 0.5, y: 0.5 } });
+        history.execute(document, resized, "Resize canvas");
+        expect(history.undo(resized)).toBe(document);
+        expect(resizeCanvas(document, { width: 100, height: 80, anchor: { x: 0, y: 0 } })).toBe(document);
+        expect(resizeCanvas(document, { width: 0, height: 80, anchor: { x: 0, y: 0 } })).toBe(document);
+        expect(resizeCanvas(document, { width: 10.5, height: 80, anchor: { x: 0, y: 0 } })).toBe(document);
     });
 });
 describe("history jumps and effects persistence", () => {
