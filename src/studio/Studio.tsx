@@ -52,6 +52,7 @@ import {
 } from "../domain/annotation";
 import { requestNativeColor, type EyeDropperConstructor } from "../domain/eyedropper";
 import { EyedropperLoupe, UI_OVERLAY_LAYER_NAME, captureStagePixels } from "./EyedropperLoupe";
+import { LAYER_TAG_OVERLAY_OPACITY, useLayerTagOverlay } from "./useLayerTagOverlay";
 import { DocumentHistory } from "../domain/history";
 import { applyPixelTileDiffs, PixelTileArchive, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
@@ -484,6 +485,8 @@ export function Studio(): JSX.Element {
     if (result.status === "picked") changePaintColor(result.color);
   };
   const history = historyRef.current.state;
+  // Selecting a layer on the canvas tints the pixels it owns, like a segmentation mask.
+  const layerTagOverlay = useLayerTagOverlay(selected, tool === "select");
   const selectionPreview = useMemo(() => pixelSelection ? createSelectionPreview(pixelSelection) : null, [pixelSelection]);
   const paintHsv = useMemo(() => hexToHsv(paintColor), [paintColor]);
   const harmonySwatches = useMemo(() => colorSchemeSwatches(paintColor, colorScheme), [paintColor, colorScheme]);
@@ -787,6 +790,7 @@ export function Studio(): JSX.Element {
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
                 {selected && (selected.type === "raster" || selected.type === "paint" || selected.type === "annotation") && wrapLayerAncestors(document.layers, selected.id, <Group x={selected.transform.x} y={selected.transform.y}
                   scaleX={selected.transform.scaleX} scaleY={selected.transform.scaleY} rotation={selected.transform.rotation}>
+                  {layerTagOverlay && <KonvaImage image={layerTagOverlay} width={selected.width} height={selected.height} opacity={LAYER_TAG_OVERLAY_OPACITY} />}
                   {selectionPreview && pixelSelection?.layerId === selected.id && <KonvaImage image={selectionPreview} width={selected.width} height={selected.height} opacity={0.72} />}
                   {marqueeDraft && tool === "marquee" && <Rect x={Math.min(marqueeDraft.start.x, marqueeDraft.end.x)} y={Math.min(marqueeDraft.start.y, marqueeDraft.end.y)}
                     width={Math.abs(marqueeDraft.end.x - marqueeDraft.start.x)} height={Math.abs(marqueeDraft.end.y - marqueeDraft.start.y)}

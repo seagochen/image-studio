@@ -1,4 +1,4 @@
-import { createId, defaultTransform, type ImageStudioDocument, type RasterLayer } from "./document";
+import { createId, defaultTransform, layerTagColor, type ImageStudioDocument, type RasterLayer } from "./document";
 import { MAX_CANVAS_EDGE, MAX_CANVAS_PIXELS } from "../shared/imageStudioDomain";
 
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
@@ -22,7 +22,7 @@ export function validateImageDimensions(width: number, height: number): ImageImp
 
 export function rasterLayerFromImage(image: DecodedImage): RasterLayer {
   return {
-    id: createId("raster"), type: "raster", name: image.name, visible: true, locked: false, opacity: 1, blendMode: "normal",
+    id: createId("raster"), type: "raster", name: image.name, tagColor: layerTagColor(), visible: true, locked: false, opacity: 1, blendMode: "normal",
     parentId: null, transform: defaultTransform(), width: image.width, height: image.height,
     source: { kind: "data-url", value: image.dataUrl, mimeType: image.mimeType },
   };

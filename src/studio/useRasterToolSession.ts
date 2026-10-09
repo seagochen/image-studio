@@ -5,7 +5,7 @@ import { clampPoint, imageToStage, screenToStage, stageToImage, type Viewport } 
 import { layerAncestors } from "../domain/layerHierarchy";
 import { addLayer, addSelectionMaskedLocalLayer, addStroke, createAnnotationLayer, replaceLastStroke, replaceRasterPixels } from "../domain/commands";
 import {
-  createId, rasterSourceUrl, type AnnotationElement, type AnnotationRectElement, type AnnotationTextElement,
+  createId, layerTagColor, rasterSourceUrl, type AnnotationElement, type AnnotationRectElement, type AnnotationTextElement,
   type ImageStudioDocument, type ImageStudioLayer, type RasterLayer, type Stroke,
 } from "../domain/document";
 import { captureStagePixels, sampleCanvasColor } from "./EyedropperLoupe";
@@ -218,7 +218,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       const copied = copySelectedRasterTiles(canvas, pixelSelection, coverage, canRecordPixelBytes);
       image = copied.image;
       const position = imageToStage({ x: copied.x, y: copied.y }, selected.transform);
-      return { ...raster, id: createId("raster"), name: selected.name + " selection", locked: false,
+      return { ...raster, id: createId("raster"), tagColor: layerTagColor(), name: selected.name + " selection", locked: false,
         rasterMaskId: undefined, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined,
         width: image.width, height: image.height, transform: { ...selected.transform, x: position.x, y: position.y },
         source: { kind: "data-url", value: image.toDataURL("image/png"), mimeType: "image/png" },
@@ -243,7 +243,7 @@ export function useRasterToolSession(options: UseRasterToolSessionOptions): UseR
       image = lifted.image; diffs = lifted.diffs;
       const position = imageToStage({ x: lifted.x, y: lifted.y }, selected.transform);
       const layer: RasterLayer = {
-        ...selected, id: createId("raster"), name: selected.name + " selection", locked: false,
+        ...selected, id: createId("raster"), tagColor: layerTagColor(), name: selected.name + " selection", locked: false,
         rasterMaskId: undefined, rasterMaskInverted: undefined, rasterMaskFeatherPx: undefined,
         width: image.width, height: image.height,
         transform: { ...selected.transform, x: position.x, y: position.y },

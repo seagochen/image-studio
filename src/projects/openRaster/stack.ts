@@ -1,4 +1,4 @@
-import { createEmptyDocument, createId, defaultTransform, parseDocument, type ImageStudioDocument, type ImageStudioLayer, type LayerBlendMode } from "../../domain/document";
+import { createEmptyDocument, createId, defaultTransform, layerTagColor, parseDocument, type ImageStudioDocument, type ImageStudioLayer, type LayerBlendMode } from "../../domain/document";
 import { validateImageDimensions } from "../../domain/importImage";
 const validOutputSize = (width: number, height: number) => Number.isInteger(width) && Number.isInteger(height) && !validateImageDimensions(width,height);
 import { bytesText, safeArchivePath } from "./archive";
@@ -39,7 +39,7 @@ export function parseStack(files: Map<string, Uint8Array>): ImageStudioDocument 
       const opacity = numberAttribute(node,"opacity",1), visibility = node.getAttribute("visibility") ?? "visible";
       const blendMode = operations[node.getAttribute("composite-op") ?? "svg:src-over"];
       if (opacity < 0 || opacity > 1 || !["visible","hidden"].includes(visibility) || !blendMode) throw new Error("Unsupported OpenRaster composition");
-      const base = {id:createId("ora"),name:(node.getAttribute("name") ?? "Layer").slice(0,500),parentId,opacity,visible:visibility === "visible",
+      const base = {id:createId("ora"),tagColor:layerTagColor(),name:(node.getAttribute("name") ?? "Layer").slice(0,500),parentId,opacity,visible:visibility === "visible",
         locked:node.getAttributeNS(ORA_NAMESPACE,"locked") === "true",blendMode,transform:defaultTransform(),width,height};
       if (node.tagName === "stack") {
         if ((node.getAttribute("isolation") ?? "isolate") !== "isolate") throw new Error("Non-isolated OpenRaster groups are not supported");

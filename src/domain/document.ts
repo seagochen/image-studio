@@ -31,6 +31,8 @@ interface LayerBase {
   effects?: LayerEffects;
   id: string;
   name: string;
+  /** Representative `#rrggbb` colour: the layer-panel dot and the selected layer's pixel overlay. */
+  tagColor: string;
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -256,6 +258,16 @@ export function touchDocument(document: ImageStudioDocument): ImageStudioDocumen
   return { ...document, metadata: { ...document.metadata, updatedAt: new Date().toISOString() } };
 }
 
+/** A random vivid hue, so neighbouring layers rarely share a colour. */
+export function layerTagColor(random: () => number = Math.random): string {
+  const hue = random() * 360;
+  const channel = (offset: number) => {
+    const k = (offset + hue / 30) % 12;
+    const value = 0.52 - 0.4 * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(value * 255).toString(16).padStart(2, "0");
+  };
+  return `#${channel(0)}${channel(8)}${channel(4)}`;
+}
 export function defaultTransform(): LayerTransform {
   return { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 };
 }
