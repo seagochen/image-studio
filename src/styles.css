@@ -111,7 +111,10 @@ input[type="range"] { min-height: auto; accent-color: var(--accent); }
 .canvas-surface { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden; background-color: var(--canvas-surround); background-image: linear-gradient(45deg,var(--checker) 25%,transparent 25%),linear-gradient(-45deg,var(--checker) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,var(--checker) 75%),linear-gradient(-45deg,transparent 75%,var(--checker) 75%); background-size: 24px 24px; background-position: 0 0,0 12px,12px -12px,-12px 0; }
 .canvas-surface.tool-hand { cursor: grab; }
 .canvas-surface.tool-hand:active { cursor: grabbing; }
-.canvas-surface.tool-text, .canvas-surface.tool-shape, .canvas-surface.tool-gradient,
+/* The hotspot is the T's top-left corner, the new text box origin; a white halo keeps the glyph
+   visible on dark artwork. */
+.canvas-surface.tool-text { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M4 3h16v4.5h-2.2V5.2H13.1v13.6h2.4V21h-7v-2.2h2.4V5.2H6.2v2.3H4z' fill='%23111827' stroke='%23fff' stroke-width='1.2' paint-order='stroke'/%3E%3C/svg%3E") 4 3, text; }
+.canvas-surface.tool-shape, .canvas-surface.tool-gradient,
 .canvas-surface.tool-marquee, .canvas-surface.tool-magicWand { cursor: crosshair; }
 .canvas-surface.tool-brush, .canvas-surface.tool-eraser,
 .canvas-surface.tool-airbrush, .canvas-surface.tool-smudge, .canvas-surface.tool-clone { cursor: none; }
