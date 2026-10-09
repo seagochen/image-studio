@@ -420,6 +420,7 @@ input[type="range"] { min-height: auto; accent-color: var(--accent); }
 .tool-options input[type="range"] { width: 80px; }
 .tool-options input[type="color"] { width: 30px; padding: 2px; }
 .tool-options output { width: 34px; font-variant-numeric: tabular-nums; }
+.tool-option-hint { font-size: 12px; color: var(--muted); }
 .active-tool-label { display: inline-flex; align-items: center; gap: 8px; min-width: 95px; color: var(--text); font-size: 12px; font-weight: 600; }
 .active-tool-label .product-icon { width: 19px; height: 19px; }
 .workbench-document-bar { display: flex; align-items: center; flex: none; min-height: 40px; border-bottom: 1px solid var(--border); background: var(--workspace); gap: 8px; padding-right: 8px; }

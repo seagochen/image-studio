@@ -38,6 +38,7 @@ export function ToolOptions(props: Props): JSX.Element {
       const value = event.target.valueAsNumber;
       if (Number.isFinite(value)) props.onTolerance(Math.max(0, Math.min(255, Math.round(value))));
     }} /></label>}
+    {tool === "select" && <span className="tool-option-hint">{workbenchCopy[locale].transformHint}</span>}
     {tool === "shape" && <label>{TOOL_LABELS[locale].shape}<select value={props.shape} onChange={(event) => props.onShape(event.target.value as ShapeTool)}>
       {(Object.keys(SHAPE_ICONS) as ShapeTool[]).map((shape) => <option key={shape} value={shape}>{TOOL_LABELS[locale][shape]}</option>)}
     </select></label>}

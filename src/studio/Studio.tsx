@@ -19,7 +19,7 @@ import { useCanvasViewport, MAX_ZOOM, MIN_ZOOM } from "./useCanvasViewport";
 import { useStudioProject } from "./useStudioProject";
 import { useRasterToolSession } from "./useRasterToolSession";
 import {
-  SECONDARY_TOOLS, SELECTION_TOOLS, DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, SIZED_CURSOR_TOOLS, TOOL_LABELS,
+  SECONDARY_TOOLS, SELECTION_TOOLS, DIRECT_PIXEL_TOOLS, PIXEL_CANVAS_TOOLS, SIZED_CURSOR_TOOLS, TOOL_LABELS, LAYER_TRANSFORMER_PROPS,
   type Tool, type ShapeTool, type PixelSelection, type MarqueeDraft,
 } from "./tools";
 import { LayerInteractions } from "./LayerInteractions";
@@ -735,15 +735,15 @@ export function Studio(): JSX.Element {
                       onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} /> :
                     <DrawingNode layer={layer} selectable={tool === "select"} transformable={pixelSelection?.layerId !== layer.id} onSelect={() => setDocument((current) => selectLayer(current, layer.id))}
                       onTransform={(transform, mergeKey) => commitLayerTransform(layer.id, transform, mergeKey)} />}
-                  {layer.type !== "group" && layer.type !== "adjustment" && selected?.id === layer.id && tool === "select" && !layer.locked && pixelSelection?.layerId !== layer.id &&
-                    <Transformer ref={transformerRef} rotateEnabled enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} />}
                 </Group>)}
+              {/* Outside the canvas clip: handles on or beyond the canvas edge must stay visible and grabbable. */}
+              {!requiresComposite && selected && selected.type !== "group" && selected.type !== "adjustment" && tool === "select" && !selected.locked && pixelSelection?.layerId !== selected.id &&
+                <Transformer ref={transformerRef} {...LAYER_TRANSFORMER_PROPS} />}
               {requiresComposite && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}>
                 <Group clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}><LayerInteractions layers={document.layers} selectable={tool === "select"} blockedTransformLayerId={pixelSelection?.layerId}
                   onSelect={(id, elementId) => selectObject(id, elementId)} onEdit={(id, elementId) => selectObject(id, elementId, true)}
                   onTransform={commitLayerTransform} /></Group>
-                {selected && selected.type !== "adjustment" && selectedEditable && tool === "select" && pixelSelection?.layerId !== selected.id && <Transformer ref={transformerRef}
-                  rotateEnabled enabledAnchors={["top-left", "top-right", "bottom-left", "bottom-right"]} />}
+                {selected && selected.type !== "adjustment" && selectedEditable && tool === "select" && pixelSelection?.layerId !== selected.id && <Transformer ref={transformerRef} {...LAYER_TRANSFORMER_PROPS} />}
               </Group>}
               {draftAnnotation && <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>

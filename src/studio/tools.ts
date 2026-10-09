@@ -1,3 +1,4 @@
+import type { TransformerConfig } from "konva/lib/shapes/Transformer";
 import type { PixelSelectionMask } from "../domain/pixelTools";
 import type { ProductIconName } from "./ProductIcon";
 import type { Locale } from "../shared/locale";
@@ -21,6 +22,12 @@ export const SELECTION_TOOLS: readonly Tool[] = ["marquee", "ellipseMarquee", "l
 export const SHAPE_ICONS: Record<ShapeTool, ProductIconName> = { line: "line", rect: "rectangle", star: "star", ellipse: "ellipse", triangle: "triangle", pentagon: "polygon", arrow: "arrow" };
 export const DIRECT_PIXEL_TOOLS: readonly Tool[] = ["brush", "eraser", "airbrush", "smudge", "clone", "gradient"];
 export const PIXEL_CANVAS_TOOLS: readonly Tool[] = [...DIRECT_PIXEL_TOOLS, ...SELECTION_TOOLS];
+/** Free scaling by default with edge anchors for one-axis stretching; Konva's default shift
+ *  behaviour then makes Shift hold the aspect ratio. */
+export const LAYER_TRANSFORMER_PROPS: Pick<TransformerConfig, "rotateEnabled" | "keepRatio" | "shiftBehavior" | "enabledAnchors"> = {
+  rotateEnabled: true, keepRatio: false, shiftBehavior: "default",
+  enabledAnchors: ["top-left", "top-center", "top-right", "middle-right", "bottom-right", "bottom-center", "bottom-left", "middle-left"],
+};
 export const SIZED_CURSOR_TOOLS: readonly Tool[] = ["brush", "eraser", "airbrush", "smudge", "clone"];
 const toolLabelsEn = { text: "Text", shape: "Shapes", marquee: "Rectangular marquee", ellipseMarquee: "Elliptical marquee", lasso: "Lasso", polygonLasso: "Polygonal lasso", magicWand: "Magic wand", selection: "Pixel selection", airbrush: "Airbrush", smudge: "Smudge", clone: "Clone stamp", gradient: "Gradient", advanced: "Advanced edit", line: "Line", rect: "Rectangle", star: "Star", ellipse: "Ellipse", triangle: "Triangle", pentagon: "Pentagon", arrow: "Arrow" };
 
