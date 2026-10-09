@@ -1,9 +1,17 @@
 import { api } from "./api";
 import { loginPath } from "./navigation";
+import { runtimeConfig } from "../runtime/runtimeConfig";
 
 let appSession: { appId: string; token: string; expiresAt: string; scopes: string[] } | null = null;
 
 export async function requireUser(nextPath: string, appId?: string): Promise<boolean> {
+  if (runtimeConfig().mode === "hosted") {
+    const response = await api("GET", "/auth/platform/me");
+    if (response.ok) return true;
+    const next = window.location.pathname + window.location.search + window.location.hash;
+    window.location.replace(`/auth/platform/login?next=${encodeURIComponent(next)}`);
+    return false;
+  }
   const response = await api("GET", "/auth/me");
   if (response.ok) {
     if (appId) await issueAppSession(appId);

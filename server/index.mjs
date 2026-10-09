@@ -9,6 +9,11 @@ async function main() {
   const config = loadConfig();
   let store = null;
   let ai = null;
+  let hosted = null;
+  if (config.mode === "hosted") {
+    const { createHostedHandler } = await import("./hostedApp.mjs");
+    hosted = createHostedHandler({ config, log });
+  }
   if (config.mode === "standalone") {
     // Loaded lazily so platform mode never touches node:sqlite or the storage volume.
     const { openStore } = await import("./store.mjs");
@@ -19,7 +24,7 @@ async function main() {
     ai = createAiProxy({ ai: config.ai, store });
   }
 
-  const server = http.createServer(createHandler({ config, store, ai, log }));
+  const server = http.createServer(hosted?.handle ?? createHandler({ config, store, ai, log }));
   server.requestTimeout = 5 * 60_000;
   server.listen(config.server.port, config.server.host, () => {
     log(`image-studio listening on ${config.server.host}:${config.server.port} (mode=${config.mode})`);
@@ -31,7 +36,7 @@ async function main() {
 
   const shutdown = () => {
     log("shutting down");
-    server.close(() => { store?.close(); process.exit(0); });
+    server.close(() => { store?.close(); hosted?.close(); process.exit(0); });
     setTimeout(() => process.exit(0), 10_000).unref();
   };
   process.on("SIGTERM", shutdown);

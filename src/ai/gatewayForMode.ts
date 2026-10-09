@@ -5,9 +5,9 @@ import { runtimeConfig } from "../runtime/runtimeConfig";
 
 /** Selects the AI adapter for the explicit runtime mode; there is no cross-mode fallback. */
 export function createAiRunGateway(): AiRunGateway {
-  return runtimeConfig().mode === "standalone" ? new StandaloneAiRunGateway() : new HttpAiRunGateway();
+  return runtimeConfig().mode !== "platform" ? new StandaloneAiRunGateway() : new HttpAiRunGateway();
 }
 
 export function modeManifestUrl(): string {
-  return runtimeConfig().mode === "standalone" ? STANDALONE_MODE_MANIFEST_URL : PLATFORM_MODE_MANIFEST_URL;
+  return runtimeConfig().mode !== "platform" ? STANDALONE_MODE_MANIFEST_URL : PLATFORM_MODE_MANIFEST_URL;
 }

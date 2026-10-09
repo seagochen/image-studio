@@ -130,10 +130,19 @@ function migrateDocument(document: Record<string, any>): void {
   if (Array.isArray(document.layers)) {
     for (const layer of document.layers) {
       if (record(layer) && layer.parentId === undefined) layer.parentId = null;
+      // Existing v14 platform projects predate tag colors; normalize inside the app.
+      if (record(layer) && layer.tagColor === undefined) layer.tagColor = legacyLayerTagColor(layer.id);
     }
   }
   if (document.version <= 6) migrateAdjustmentMasksToPosition(document);
   document.version = IMAGE_STUDIO_DOCUMENT_VERSION;
+}
+
+function legacyLayerTagColor(id: unknown): string {
+  const colors = ["#3b82f6", "#ef4444", "#22c55e", "#a855f7", "#f59e0b", "#06b6d4"];
+  let hash = 0;
+  for (const char of typeof id === "string" ? id : "") hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
 }
 
 /**
