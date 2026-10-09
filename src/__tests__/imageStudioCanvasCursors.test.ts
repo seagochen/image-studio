@@ -14,6 +14,10 @@ describe("canvas cursors and layer handles", () => {
     expect(crosshair).toBeDefined();
   });
 
+  it("puts the eyedropper hotspot on the pipette tip (image-studio#26)", () => {
+    expect(styles).toMatch(/\.canvas-surface\.tool-eyedropper \{ cursor: url\("data:image\/svg\+xml,.*"\) 2 22, crosshair; \}/);
+  });
+
   it("scales freely by default, stretches from edge anchors and keeps ratio with Shift (image-studio#24)", () => {
     expect(LAYER_TRANSFORMER_PROPS).toMatchObject({ keepRatio: false, shiftBehavior: "default", rotateEnabled: true });
     expect(LAYER_TRANSFORMER_PROPS.enabledAnchors).toEqual(expect.arrayContaining(["top-center", "bottom-center", "middle-left", "middle-right", "top-left", "bottom-right"]));

@@ -14,6 +14,8 @@ interface Props {
   tolerance: number; onTolerance: (value: number) => void;
   selectionOperation: SelectionOperation; onSelectionOperation: (value: SelectionOperation) => void;
   shape: ShapeTool; onShape: (shape: ShapeTool) => void;
+  /** Present only where the browser offers a screen-wide colour picker. */
+  onPickScreen?: () => void;
 }
 
 export function ToolOptions(props: Props): JSX.Element {
@@ -39,6 +41,10 @@ export function ToolOptions(props: Props): JSX.Element {
       if (Number.isFinite(value)) props.onTolerance(Math.max(0, Math.min(255, Math.round(value))));
     }} /></label>}
     {tool === "select" && <span className="tool-option-hint">{workbenchCopy[locale].transformHint}</span>}
+    {tool === "eyedropper" && <>
+      <span className="tool-option-hint">{workbenchCopy[locale].eyedropperHint}</span>
+      {props.onPickScreen && <button type="button" onClick={props.onPickScreen}>{workbenchCopy[locale].pickScreen}</button>}
+    </>}
     {tool === "shape" && <label>{TOOL_LABELS[locale].shape}<select value={props.shape} onChange={(event) => props.onShape(event.target.value as ShapeTool)}>
       {(Object.keys(SHAPE_ICONS) as ShapeTool[]).map((shape) => <option key={shape} value={shape}>{TOOL_LABELS[locale][shape]}</option>)}
     </select></label>}

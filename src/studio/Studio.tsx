@@ -49,7 +49,8 @@ import {
 import {
   createArrowElement, createEllipseElement, createLineElement, createPolygonElement, createRectElement, createStarElement, createTextElement,
 } from "../domain/annotation";
-import { requestNativeColor, sampledPixelColor, type EyeDropperConstructor } from "../domain/eyedropper";
+import { requestNativeColor, type EyeDropperConstructor } from "../domain/eyedropper";
+import { EyedropperLoupe, UI_OVERLAY_LAYER_NAME, captureStagePixels } from "./EyedropperLoupe";
 import { DocumentHistory } from "../domain/history";
 import { applyPixelTileDiffs, PixelTileArchive, type PixelTileDiff } from "../domain/pixelTileHistory";
 import { rasterLayerFromImage } from "../domain/importImage";
@@ -116,6 +117,10 @@ export function Studio(): JSX.Element {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const { viewport, setViewport, surfaceSize, fitView, zoomAt, actualSize } = useCanvasViewport(surfaceRef, document.canvas);
   const [tool, setTool] = useState<Tool>("select");
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
+  const toolBeforeEyedropperRef = useRef<Tool>("select");
+  const [eyedropperSource, setEyedropperSource] = useState<HTMLCanvasElement | null>(null);
   const [selectionOperation, setSelectionOperation] = useState<SelectionOperation>("replace");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("properties");
   const [pathEditing,setPathEditing]=useState<{layerId?:string;mask:boolean;initial?:import("../domain/document").AnnotationPathElement}|null>(null);
@@ -436,7 +441,7 @@ export function Studio(): JSX.Element {
       else if (action === "paste") pasteCopiedLayer();
       else if (action === "delete") removeSelectedLayer();
       else if (action === "fit") fitView();
-      else if (action === "eyedropper") void pickScreenColor();
+      else if (action === "eyedropper") activateTool("eyedropper");
       else {
         if (SECONDARY_TOOLS.includes(action) && (selected?.type !== "raster" || !selectedEditable || selectedRasterTooLarge)) return;
         if (SELECTION_TOOLS.includes(action) && (!selected || !["raster", "paint", "annotation"].includes(selected.type)
@@ -470,11 +475,10 @@ export function Studio(): JSX.Element {
       else setTextFocusRequest((value) => value + 1);
     }
   };
+  const nativeEyeDropper = (window as Window & { EyeDropper?: EyeDropperConstructor }).EyeDropper;
+  /** Samples outside the canvas through the browser picker, whose loupe the page cannot place. */
   const pickScreenColor = async () => {
-    setTool("eyedropper");
-    setInspectorTab("properties");
-    const EyeDropper = (window as Window & { EyeDropper?: EyeDropperConstructor }).EyeDropper;
-    const result = await requestNativeColor(EyeDropper);
+    const result = await requestNativeColor(nativeEyeDropper);
     if (result.status === "picked") changePaintColor(result.color);
   };
   const history = historyRef.current.state;
@@ -483,7 +487,11 @@ export function Studio(): JSX.Element {
   const harmonySwatches = useMemo(() => colorSchemeSwatches(paintColor, colorScheme), [paintColor, colorScheme]);
   const previewHistogram = useMemo(() => compositePreview ? previewLuminosityHistogram(compositePreview) : undefined, [compositePreview]);
   const toolLabels = TOOL_LABELS[locale];
-  const activateTool = (next: Tool) => { setTool(next); setInspectorTab("properties"); };
+  const activateTool = (next: Tool) => {
+    // Read through the ref: shortcut handlers keep the closure of an earlier render.
+    if (next === "eyedropper" && toolRef.current !== "eyedropper") toolBeforeEyedropperRef.current = toolRef.current;
+    setTool(next); setInspectorTab("properties");
+  };
   const toolLabel = (name: Tool) => name === "select" || name === "hand" || name === "brush" || name === "eraser" || name === "eyedropper"
     ? t(name) : toolLabels[name];
   const cursorToolSize = brushSize;
@@ -526,7 +534,7 @@ export function Studio(): JSX.Element {
   const saveBlocker = !document.layers.length ? reasonCopy.noDocument : fileBusy ? reasonCopy.fileBusy : persistence === "saving" ? reasonCopy.saving : null;
   const commands = studioCommands({ locale, t, toolLabel, toolEnabled,
     toolShortcut: (next) => shortcutBindings[next as ShortcutAction],
-    activateTool: (next) => next === "eyedropper" ? void pickScreenColor() : activateTool(next),
+    activateTool,
     selectPanel: setInspectorTab, adjustmentLabels: ADJUSTMENT_KIND_LABELS[locale], createAdjustment: createAdjustmentForSelection,
     actions: {
       "file.save": { label: t("save"), enabled: Boolean(document.layers.length) && !fileBusy && persistence !== "saving", run: () => void manuallySaveProject() },
@@ -580,6 +588,24 @@ export function Studio(): JSX.Element {
     window.document.addEventListener("keydown", keydown);
     return () => window.document.removeEventListener("keydown", keydown);
   }, [commands, modalOpen, fileBusy, paletteOpen, shortcutBindings, pathEditing, cropOpen, historyBusy]);
+
+  // The loupe magnifies one capture per rendered state instead of re-rendering the stage per move.
+  useEffect(() => {
+    if (tool !== "eyedropper") { setEyedropperSource(null); return; }
+    const frame = requestAnimationFrame(() => setEyedropperSource(captureStagePixels(stageRef.current)));
+    return () => cancelAnimationFrame(frame);
+  }, [tool, document, viewport, surfaceSize, compositePreview]);
+  useEffect(() => {
+    if (tool !== "eyedropper") return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      setCursorPreview(null);
+      setTool(toolBeforeEyedropperRef.current);
+    };
+    window.document.addEventListener("keydown", cancel);
+    return () => window.document.removeEventListener("keydown", cancel);
+  }, [tool, setCursorPreview]);
 
   useEffect(() => {
     if (!saveToast) return;
@@ -643,7 +669,7 @@ export function Studio(): JSX.Element {
       <ToolOptions tool={tool} label={toolLabel(tool)} locale={locale} t={t} color={paintColor} onColor={changePaintColor}
         size={brushSize} onSize={setBrushSize} brush={brushSettings} onBrush={updateBrushSettings}
         tolerance={magicTolerance} onTolerance={setMagicTolerance} selectionOperation={selectionOperation} onSelectionOperation={setSelectionOperation}
-        shape={shapeTool} onShape={setShapeTool} />
+        shape={shapeTool} onShape={setShapeTool} onPickScreen={nativeEyeDropper ? () => void pickScreenColor() : undefined} />
       {fileBusy && <div className="studio-warning" role="status">{fileCopy[locale].busy}</div>}
       {fileError && <div className="studio-error" role="alert">{fileError}</div>}
       {(error || persistenceError) && <div className="studio-error" role="alert">{error ? t(error) : `${t("saveFailed")}: ${persistenceError}`}</div>}
@@ -752,7 +778,7 @@ export function Studio(): JSX.Element {
                     selectable={false} onSelect={() => undefined} onTransform={() => undefined} />)}
               </Group>}
             </Layer>
-            <Layer listening={false}>
+            <Layer listening={false} name={UI_OVERLAY_LAYER_NAME}>
               <Group x={viewport.offsetX} y={viewport.offsetY} scaleX={viewport.scale} scaleY={viewport.scale}
                 clip={{ x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }}>
                 {selected && (selected.type === "raster" || selected.type === "paint" || selected.type === "annotation") && wrapLayerAncestors(document.layers, selected.id, <Group x={selected.transform.x} y={selected.transform.y}
@@ -768,11 +794,12 @@ export function Studio(): JSX.Element {
                     closed={tool === "lasso"} stroke="#1f2937" strokeWidth={1} dash={[5, 4]} listening={false} />}
                 </Group>)}
               </Group>
-              {cursorPreview && <Circle name="current-color-preview" x={cursorPreview.x} y={cursorPreview.y}
+              {cursorPreview && tool !== "eyedropper" && <Circle name="current-color-preview" x={cursorPreview.x} y={cursorPreview.y}
                 radius={SIZED_CURSOR_TOOLS.includes(tool) ? Math.max(2, cursorRadius) : 7}
                 stroke="#111827" strokeWidth={1} fill={paintColor} opacity={0.25} listening={false} />}
             </Layer>
           </Stage>
+          {tool === "eyedropper" && cursorPreview && <EyedropperLoupe source={eyedropperSource} pointer={cursorPreview} surface={surfaceSize} />}
           <Navigator document={document} viewport={viewport} surfaceSize={surfaceSize} collapsed={navigatorCollapsed} onCollapsedChange={setNavigatorCollapsed}
             onPan={(offsetX, offsetY) => setViewport((current) => ({ ...current, offsetX, offsetY }))} t={t} />
           </div>
